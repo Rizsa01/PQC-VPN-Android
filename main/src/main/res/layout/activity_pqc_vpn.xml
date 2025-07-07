@@ -27,6 +27,19 @@
         app:layout_constraintTop_toBottomOf="@+id/label_pqc_kem" />
 
     <Button
+        android:id="@+id/button_select_folder"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="8dp"
+        android:text="Select Certs Folder"
+        app:layout_constraintBottom_toTopOf="@+id/button_connect"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
+
+    <Button
         android:id="@+id/button_connect"
         android:layout_width="0dp"
         android:layout_height="wrap_content"

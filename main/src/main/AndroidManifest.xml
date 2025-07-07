@@ -12,6 +12,10 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
 
 
+    <uses-feature android:name="android.hardware.type.pc" android:required="false" />
+    <uses-feature android:name="android.software.vpn" android:required="true" />
+
+
     <application
         android:name=".core.ICSOpenVPNApplication"
         android:allowBackup="true"

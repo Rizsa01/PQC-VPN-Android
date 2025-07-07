@@ -42,6 +42,15 @@ configure<BaseAppModuleExtension> {
         externalNativeBuild {
             cmake {
                 arguments += listOf("-DANDROID_STL=c++_shared")
+                cppFlags.add("-std=c++17")
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("debug") {
+            packagingOptions {
+                jniLibs.keepDebugSymbols.add("**/*.so")
             }
         }
     }
@@ -60,10 +69,10 @@ configure<BaseAppModuleExtension> {
 
     sourceSets {
         getByName("main") {
-            java {
-                srcDir("src/main/java")
-                srcDir("src/ui/java")
-            }
+            // leave java alone...
+            java.srcDirs("src/main/java", "src/ui/java")
+            // and explicitly tell Gradle where your .so files live:
+            jniLibs.srcDirs("src/main/jniLibs")
         }
     }
 
@@ -98,8 +107,12 @@ configure<BaseAppModuleExtension> {
 
     packaging {
         jniLibs {
-            useLegacyPackaging = true
+
+            keepDebugSymbols += "**/arm64-v8a/openvpn"
+            keepDebugSymbols += "**/armeabi-v7a/openvpn"
+            keepDebugSymbols += "**/x86_64/openvpn"
         }
+
     }
 
     // THE DEPRECATED BUT NECESSARY API.
@@ -137,6 +150,7 @@ fun registerGenTask(variantName: String, variantDirName: String): File {
     }
     return baseDir
 }
+
 
 // DIRECT DEPENDENCIES
 dependencies {
