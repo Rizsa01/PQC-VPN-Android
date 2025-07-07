@@ -15,7 +15,6 @@ import java.net.URL;
 import java.util.List;
 
 import de.blinkt.openvpn.R;
-import de.blinkt.openvpn.VpnProfile;
 
 public class ProxyDetection {
 	static SocketAddress detectProxy(VpnProfile vp) {

@@ -15,8 +15,6 @@ import java.io.Reader;
 import java.io.StringReader;
 import java.util.*;
 
-import de.blinkt.openvpn.VpnProfile;
-
 //! Openvpn Config FIle Parser, probably not 100% accurate but close enough
 
 // And remember, this is valid :)

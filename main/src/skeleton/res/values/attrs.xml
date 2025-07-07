@@ -1,5 +1,4 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <resources>
-    <!-- allows to share the vector graphics with ui build, a little bit hacky... -->
-    <attr name="colorControlNormal" format="color" />
+    <!-- This file can be empty if you have no other custom attributes -->
 </resources>

@@ -3,14 +3,15 @@
   ~ Distributed under the GNU GPL v2 with additional terms. For full terms see the file doc/LICENSE.txt
   -->
 <resources>
-    <string name="app">OpenVPN for Android</string>
-    <string name="address">Server Address:</string>
+    <string name="app" translatable="false">OpenVPN for Android</string>
+    <string name="address" translatable="false">Server Address:</string>
     <string name="port">Server Port:</string>
     <string name="location">Location</string>
     <string name="cant_read_folder">Unable to read directory</string>
     <string name="select">Select</string>
     <string name="cancel">Cancel</string>
     <string name="no_data">No Data</string>
+    <string name="not_connected">Not connected</string>
     <string name="useLZO">LZO Compression</string>
     <string name="client_no_certificate">No Certificate</string>
     <string name="client_certificate_title">Client Certificate</string>
@@ -515,10 +516,21 @@
     <string name="dnsserver_ignore_port">Note ignoring port %1$d for DNS server with address %2$s"</string>
     <string name="dnsserver_ignore_dnnsec">Skipping DNS server entry %1$d as it requires DNSSEC: %2$s</string>
     <string name="dnsserver_ignore_tls_doh"> Skipping DNS server entry %1$d as it requires DNS over TLS or DNS over HTTPS: %2$s</string>
-    <string name="dnsserver_ignore_dnsport">Skipping address %1$s:%2$d for DNS server entry %1$d as uses a non-default port: %2$s</string>
+    <string name="dnsserver_ignore_dnsport" translatable="false">Skipping address %1$s:%2$d for DNS server entry %1$d as uses a non-default port: %2$s</string>
     <string name="dnsserver_no_valid_server">No valid DNS server left. Terminating connection.</string>
     <string name="editor_close_profile_changed">Profile has changed outside the editor. Closing configuration editor.</string>
     <string name="confirmations_title">Disable VPN connection confirmations</string>
     <string name="confirmations_summary">(Not recommended) Disables confirmations when connecting/disconnecting VPN. This disables the safeguard to accidientially disconnect VPN connections</string>
+    <string name="keychain_access_error"> keychain_access_error</string>
+    <string name="permission_denied_ext_app"> permission_denied_ext_app</string>
+    <string name="samsung_dns_fix_warning">samsung dns fix warning</string>
+    <string name="error_may_cause_another_vpn" >error_may_cause_another_vpn</string>
+    <string name="http_proxy_requires_android_10" translatable="false">http_proxy_requires_android_10</string>
+    <string name="no_allowed_app_configured" translatable="false">no_allowed_app_configured</string>
+    <string name="sso_generic_request" translatable="false">sso_generic_request</string>
+    <string name="compability_mode">compability_mode</string>
+    <string name="import_pkcs12">import_pkcs12</string>
+    <string name="permission_to_read_sd_card">permission_to_read_sd_card</string>
+    <string name="ok">ok</string>
 
 </resources>
