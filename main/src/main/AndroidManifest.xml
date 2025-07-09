@@ -10,60 +10,58 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
-
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Add this required permission -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
 
     <uses-feature android:name="android.hardware.type.pc" android:required="false" />
     <uses-feature android:name="android.software.vpn" android:required="true" />
-
+    <uses-feature android:name="android.software.connectionservice" android:required="false" />
 
     <application
         android:name=".core.ICSOpenVPNApplication"
         android:allowBackup="true"
         android:appCategory="productivity"
         android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:roundIcon="@mipmap/ic_launcher"
         android:label="@string/app"
         android:supportsRtl="true"
         android:theme="@style/blinkt"
-        tools:ignore="UnusedAttribute"
-        android:extractNativeLibs="true">  <!-- FIX: Added to solve 16KB alignment issue -->
+        tools:ignore="UnusedAttribute">
 
         <meta-data
             android:name="android.content.APP_RESTRICTIONS"
             android:resource="@xml/app_restrictions" />
 
-        <!-- This is our new main activity. It is the only one that needs to be the LAUNCHER. -->
-
         <activity
             android:name=".activities.PqcVpnActivity"
             android:exported="true"
-            android:theme="@style/Theme.AppCompat.Light.DarkActionBar">
+            android:theme="@style/Theme.AppCompat.Light.DarkActionBar"
+            android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-
-        <!-- These are the core services that need to be declared. -->
         <service
             android:name=".core.OpenVPNService"
             android:exported="true"
             android:permission="android.permission.BIND_VPN_SERVICE"
-            android:foregroundServiceType="specialUse"
+            android:foregroundServiceType="specialUse|connectedDevice"
             android:process=":openvpn">
             <intent-filter>
                 <action android:name="android.net.VpnService" />
             </intent-filter>
-            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="vpn"/>
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="vpn"/>
         </service>
 
         <service
             android:name=".core.OpenVPNStatusService"
             android:exported="false"
             android:process=":openvpn" />
-
-        <!-- All other activities, receivers, and services that we deleted have been removed from the manifest. -->
 
     </application>
 

@@ -9,6 +9,9 @@ import android.app.Application;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
+import android.util.Log; // Import the Log class
+
+import java.util.concurrent.Executors; // Import the executor
 
 import de.blinkt.openvpn.BuildConfig;
 
@@ -19,11 +22,33 @@ public class ICSOpenVPNApplication extends Application {
     public void onCreate() {
         super.onCreate();
 
-        // This is still useful for debugging if you need it.
         if (BuildConfig.BUILD_TYPE.equals("debug")) {
             // Optional: Enable strict modes if needed for advanced debugging.
-            // enableStrictModes();
         }
+
+        // =======================================================================================
+        // ### BEGIN DEFINITIVE AND ONLY CHANGE ###
+        // The startup freeze (ANR) is caused by the slow, blocking initialization
+        // of the native libraries. We will trigger this initialization now, on a
+        // background thread, so it does not block the main UI thread.
+
+        Executors.newSingleThreadExecutor().execute(() -> {
+            try {
+                Log.d("PQC_VPN_App", "Starting background native library pre-load.");
+                // This is the call that forces the OS to load our JNI wrapper ('libopenvpn.so')
+                // and all of its dependencies (libpqccrypto.so, liboqs.so, etc.).
+                // This is the slow operation. By doing it here, in the background,
+                // we prevent the main thread from freezing at startup.
+                System.loadLibrary("openvpn");
+                Log.d("PQC_VPN_App", "Background native library pre-load complete.");
+            } catch (Throwable t) {
+                // Catch any error during loading and log it.
+                Log.e("PQC_VPN_App", "Critical error during native library pre-load.", t);
+            }
+        });
+        // ### END DEFINITIVE AND ONLY CHANGE ###
+        // =======================================================================================
+
 
         // We still want to initialize the status listener
         mStatus = new StatusListener();

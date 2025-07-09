@@ -43,6 +43,9 @@ configure<BaseAppModuleExtension> {
             cmake {
                 arguments += listOf("-DANDROID_STL=c++_shared")
                 cppFlags.add("-std=c++17")
+                // THIS LINE IS THE ONLY CHANGE
+                // It tells Gradle to find and build the 'openvpn' target from CMake.
+                targets.add("openvpn")
             }
         }
     }
@@ -105,14 +108,15 @@ configure<BaseAppModuleExtension> {
         jvmTarget = "17"
     }
 
+
     packaging {
         jniLibs {
-
+            useLegacyPackaging = true
             keepDebugSymbols += "**/arm64-v8a/openvpn"
             keepDebugSymbols += "**/armeabi-v7a/openvpn"
             keepDebugSymbols += "**/x86_64/openvpn"
         }
-
+        resources.excludes += setOf("META-INF/**")
     }
 
     // THE DEPRECATED BUT NECESSARY API.

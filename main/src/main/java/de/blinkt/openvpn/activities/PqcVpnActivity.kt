@@ -1,31 +1,31 @@
+// Logs added version of PqcVpnActivity.kt
+
 package de.blinkt.openvpn.activities
 
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Intent
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.net.VpnService
-import android.os.Build
 import android.os.Bundle
-import android.os.Environment
+import android.os.IBinder
 import android.util.Log
 import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.documentfile.provider.DocumentFile
+import androidx.lifecycle.lifecycleScope
+import de.blinkt.openvpn.core.OpenVPNService
 import de.blinkt.openvpn.core.ProfileManager
 import de.blinkt.openvpn.core.VpnProfile
-import de.blinkt.openvpn.core.OpenVPNService
 import de.blinkt.openvpn.databinding.ActivityPqcVpnBinding
+import kotlinx.coroutines.launch
 import java.io.BufferedReader
-import java.io.File
-import java.io.IOException
 import java.io.InputStreamReader
-import java.util.*
-import android.Manifest // Ensure this import is present
 
 class PqcVpnActivity : AppCompatActivity() {
 
@@ -34,47 +34,63 @@ class PqcVpnActivity : AppCompatActivity() {
     private lateinit var spinnerAdapter: ArrayAdapter<String>
     private var certsFolderUri: Uri? = null
 
-    // ActivityResultLauncher for the VPN permission dialog
-    private val vpnPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            Log.i(TAG, "VPN permission GRANTED by user.")
-            // The user just granted permission, so we can now re-try starting the VPN.
-            val selectedFolder = binding.spinnerPqcKem.selectedItem as? String
-            if (selectedFolder != null) {
-                startVpn(selectedFolder)
-            }
-        } else {
-            Log.e(TAG, "VPN permission DENIED by user.")
-            updateStatus("Status: VPN permission denied. Cannot connect.")
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, service: IBinder) {
+            Log.d(TAG, "Service connected: $name")
+            Log.d(TAG, "onServiceConnected")
+
+        }
+
+        override fun onServiceDisconnected(name: ComponentName) {
+            Log.d(TAG, "Service disconnected: $name")
+
         }
     }
 
-    // ActivityResultLauncher for the folder picker
-    private val openDirectoryLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            result.data?.data?.also { uri ->
-                Log.i(TAG, "User selected directory URI: $uri")
-                // Persist the permission across app restarts
-                val contentResolver = applicationContext.contentResolver
-                val takeFlags: Int = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                contentResolver.takePersistableUriPermission(uri, takeFlags)
-
-                certsFolderUri = uri
-                findClientFolders()
+    private val vpnPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            Log.d(TAG, "onActivityResult(VPN_PERMISSION) → ${result.resultCode}")
+            if (result.resultCode == Activity.RESULT_OK) {
+                Log.d(TAG, "VPN permission granted")
+                actuallyStartVpn()
+            } else {
+                Log.d(TAG, "VPN permission denied by user")
+                updateStatus("Status: VPN permission denied.")
             }
         }
-    }
+
+    private val openDirectoryLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            Log.d(TAG, "onActivityResult(OPEN_DOC_TREE) → ${result.resultCode}")
+            if (result.resultCode == Activity.RESULT_OK) {
+                result.data?.data?.also { uri ->
+                    Log.d(TAG, "Received URI: $uri")
+                    try {
+                        contentResolver.takePersistableUriPermission(
+                            uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                        )
+                        certsFolderUri = uri
+                        findClientFolders()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error taking persistable URI permission", e)
+                        updateStatus("ERROR: Couldn't get folder permissions.")
+                    }
+                }
+            } else {
+                Log.d(TAG, "Folder picker cancelled")
+            }
+        }
 
     companion object {
         private const val TAG = "PQC_VPN_DEBUG"
-        private const val PERMISSIONS_REQUEST_READ_EXTERNAL_STORAGE = 101
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Log.d(TAG, "onCreate() called")
         binding = ActivityPqcVpnBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        Log.d(TAG, "Activity onCreate")
 
         title = "PQC VPN Test Client"
 
@@ -83,187 +99,167 @@ class PqcVpnActivity : AppCompatActivity() {
         binding.spinnerPqcKem.adapter = spinnerAdapter
 
         binding.buttonSelectFolder.setOnClickListener {
+            Log.d(TAG, "User clicked 'Select Folder'")
+            updateStatus("Opening folder picker…")
             openDirectoryPicker()
         }
 
         binding.buttonConnect.setOnClickListener {
-            val selectedFolder = binding.spinnerPqcKem.selectedItem as? String
-            if (selectedFolder != null) {
-                startVpn(selectedFolder)
-            } else {
-                Toast.makeText(this, "Please select a certificate folder first.", Toast.LENGTH_SHORT).show()
+            Log.d(TAG, "User clicked 'Connect'")
+            val folder = binding.spinnerPqcKem.selectedItem as? String
+            if (folder == null) {
+                Log.d(TAG, "No folder selected, showing toast")
+                Toast.makeText(this, "Select a cert folder first.", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
             }
+            Log.d(TAG, "Selected folder: $folder")
+            requestVpnPermission()
         }
 
-        updateStatus("Status: Please select the 'certs' folder.")
-        // Instead of calling directly, we wait for the user to grant permission.
-        // The permission check will trigger the folder scan.
-        checkAndRequestStoragePermission()
+        updateStatus("Status: Please select your 'certs' folder.")
+    }
+
+    override fun onStart() {
+        super.onStart()
+        Log.d(TAG, "onStart() → Binding to OpenVPNService")
+        bindService(Intent(this, OpenVPNService::class.java), serviceConnection, BIND_AUTO_CREATE)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        Log.d(TAG, "onResume()")
+    }
+
+    override fun onPause() {
+        super.onPause()
+        Log.d(TAG, "onPause()")
+    }
+
+    override fun onStop() {
+        super.onStop()
+        Log.d(TAG, "onStop() → Unbinding service")
+        unbindService(serviceConnection)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.d(TAG, "onDestroy()")
     }
 
     private fun openDirectoryPicker() {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
-        openDirectoryLauncher.launch(intent)
-    }
-
-    private fun updateStatus(message: String) {
-        Log.d(TAG, message)
-        binding.textStatus.text = message
-    }
-
-    private fun checkAndRequestStoragePermission() {
-        Log.d(TAG, "Checking for READ_EXTERNAL_STORAGE permission...")
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-            updateStatus("Status: Permission not found. Requesting from user...")
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), PERMISSIONS_REQUEST_READ_EXTERNAL_STORAGE)
-        } else {
-            Log.d(TAG, "Storage permission already granted.")
-            // If we already have permission, we can try to check for previously selected folders.
-            // For simplicity in this test app, we just prompt the user to select again.
-            updateStatus("Status: Please use 'Select Certs Folder' button.")
-        }
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == PERMISSIONS_REQUEST_READ_EXTERNAL_STORAGE) {
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                Log.i(TAG, "READ_EXTERNAL_STORAGE permission granted by user.")
-                updateStatus("Status: Storage permission granted. Please select the 'certs' folder.")
-            } else {
-                Log.e(TAG, "READ_EXTERNAL_STORAGE permission denied by user.")
-                updateStatus("Status: Permission to read files denied.")
-            }
-        }
+        Log.d(TAG, "Launching directory picker")
+        openDirectoryLauncher.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE))
     }
 
     private fun findClientFolders() {
-        val folderUri = certsFolderUri ?: return
-        updateStatus("Status: Scanning selected folder for certificates...")
-
-        val parentDocFile = DocumentFile.fromTreeUri(this, folderUri)
-        if (parentDocFile == null || !parentDocFile.exists() || !parentDocFile.isDirectory) {
-            updateStatus("ERROR: Could not access the selected folder.")
-            return
-        }
-
-        val foundFolders = parentDocFile.listFiles().filter { docFile ->
-            docFile.isDirectory &&
-                    docFile.findFile("client_cert.crt")?.exists() == true &&
-                    docFile.findFile("client_key.key")?.exists() == true
-        }.mapNotNull { it.name }
-
-        Log.i(TAG, "Scan complete. Found folders: $foundFolders")
-
-        clientCertFolders.clear()
-        clientCertFolders.addAll(foundFolders)
-        spinnerAdapter.notifyDataSetChanged()
-
-        if (clientCertFolders.isEmpty()) {
-            updateStatus("Status: No valid client folders found in the selected directory.")
-        } else {
-            updateStatus("Status: Found ${clientCertFolders.size} folder(s). Please select one.")
-        }
-    }
-
-    private fun startVpn(folderName: String) {
-        // Step 1: Check for VPN Permission before doing anything else.
-        val vpnIntent = VpnService.prepare(this)
-        if (vpnIntent != null) {
-            updateStatus("Status: Awaiting user permission for VPN connection...")
-            Log.w(TAG, "VPN permission not yet granted. Launching system dialog.")
-            vpnPermissionLauncher.launch(vpnIntent)
-            return // Exit the function and wait for the user's response from the launcher.
-        }
-
-        // Step 2: If we get here, permission is already granted. Proceed with building the profile.
-        Log.i(TAG, "VPN permission already granted. Proceeding with connection.")
-        updateStatus("Status: Verifying files for '$folderName'...")
-
-        val parentFolderUri = certsFolderUri ?: run {
-            updateStatus("ERROR: Certs folder permission lost. Please re-select.")
-            return
-        }
-        val parentFolder = DocumentFile.fromTreeUri(this, parentFolderUri)!!
-
-        val clientFolder = parentFolder.findFile(folderName)
-        if (clientFolder == null || !clientFolder.isDirectory) {
-            updateStatus("ERROR: Could not find client subfolder '$folderName'.")
-            return
-        }
-
-        val caCertDoc = parentFolder.findFile("ca_cert.crt")
-        if (caCertDoc == null || !caCertDoc.exists()) {
-            updateStatus("ERROR: ca_cert.crt not found in selected folder.")
-            return
-        }
-
-        val clientCertDoc = clientFolder.findFile("client_cert.crt")
-        if (clientCertDoc == null || !clientCertDoc.exists()) {
-            updateStatus("ERROR: client_cert.crt not found inside '$folderName'.")
-            return
-        }
-
-        val clientKeyDoc = clientFolder.findFile("client_key.key")
-        if (clientKeyDoc == null || !clientKeyDoc.exists()) {
-            updateStatus("ERROR: client_key.key not found inside '$folderName'.")
-            return
-        }
-
-        updateStatus("Status: All files found. Reading contents...")
-
-        try {
-            val caCert = readTextFromUri(caCertDoc.uri)
-            val clientCert = readTextFromUri(clientCertDoc.uri)
-            val clientKey = readTextFromUri(clientKeyDoc.uri)
-            Log.i(TAG, "All certificate files read successfully.")
-
-            val profileName = "PQC Test - $folderName"
-            val profile = VpnProfile(profileName)
-
-            profile.mConnections[0].mServerName = "48.209.35.108"
-            profile.mConnections[0].mServerPort = "1194"
-            profile.mConnections[0].mUseUdp = true
-            profile.mExpectTLSCert = true
-
-            profile.mCaFilename = "[[INLINE]]$caCert"
-            profile.mClientCertFilename = "[[INLINE]]$clientCert"
-            profile.mClientKeyFilename = "[[INLINE]]$clientKey"
-
-            Log.d(TAG, "Profile created. Embedding certs.")
-
-            val pm = ProfileManager.getInstance(this)
-            pm.addProfile(profile)
-            ProfileManager.saveProfile(this, profile)
-            pm.saveProfileList(this)
-            Log.i(TAG, "Profile '$profileName' saved.")
-
-            val serviceIntent = profile.getStartServiceIntent(this, "PQC Test Manual Start", true)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(serviceIntent)
-            } else {
-                startService(serviceIntent)
+        Log.d(TAG, "Scanning selected folder for cert directories")
+        updateStatus("Status: Scanning for certificates…")
+        lifecycleScope.launch {
+            val uri = certsFolderUri ?: run {
+                Log.w(TAG, "certsFolderUri is null")
+                return@launch
             }
-            updateStatus("Status: Connecting... Check notification & Logcat for OpenVPN logs.")
+            val parent = DocumentFile.fromTreeUri(this@PqcVpnActivity, uri)
+            if (parent == null || !parent.isDirectory) {
+                Log.e(TAG, "Invalid folder URI or not a directory")
+                updateStatus("ERROR: Bad folder URI.")
+                return@launch
+            }
 
-        } catch (e: Exception) {
-            updateStatus("ERROR: Failed to read file contents or start VPN.")
-            Log.e(TAG, "Error during file read or VPN start", e)
-        }
-    }
-
-    @Throws(IOException::class)
-    private fun readTextFromUri(uri: Uri): String {
-        val stringBuilder = StringBuilder()
-        contentResolver.openInputStream(uri)?.use { inputStream ->
-            BufferedReader(InputStreamReader(inputStream)).use { reader ->
-                var line: String? = reader.readLine()
-                while (line != null) {
-                    stringBuilder.append(line).append('\n')
-                    line = reader.readLine()
+            Log.d(TAG, "Found folder: ${parent.name}")
+            val found = parent.listFiles()
+                .filter {
+                    val hasCert = it.findFile("client_cert.crt")?.exists() == true
+                    val hasKey = it.findFile("client_key.key")?.exists() == true
+                    Log.d(TAG, "Checking ${it.name} → cert: $hasCert, key: $hasKey")
+                    it.isDirectory && hasCert && hasKey
                 }
-            }
+                .mapNotNull { it.name }
+
+            clientCertFolders.clear()
+            clientCertFolders.addAll(found)
+            spinnerAdapter.notifyDataSetChanged()
+
+            Log.d(TAG, "Found ${found.size} cert folders: $found")
+
+            updateStatus(
+                if (found.isEmpty())
+                    "Status: No valid client folders found."
+                else
+                    "Status: Found ${found.size} folder(s)."
+            )
         }
-        return stringBuilder.toString()
+    }
+
+    private fun requestVpnPermission() {
+        Log.d(TAG, "Requesting VPN permission from system")
+        updateStatus("Status: Requesting VPN permission…")
+        VpnService.prepare(this)?.let {
+            Log.d(TAG, "VPN permission not yet granted, launching system dialog")
+            vpnPermissionLauncher.launch(it)
+        } ?: run {
+            Log.d(TAG, "VPN permission already granted")
+            actuallyStartVpn()
+        }
+    }
+
+    private fun actuallyStartVpn() {
+        val folderName = binding.spinnerPqcKem.selectedItem as String
+        Log.d(TAG, "Preparing to start VPN with folder: $folderName")
+        updateStatus("Status: Verifying '$folderName'…")
+
+        lifecycleScope.launch {
+            val parentUri = certsFolderUri ?: run {
+                Log.e(TAG, "certsFolderUri is null during VPN start")
+                updateStatus("ERROR: No certs URI.")
+                return@launch
+            }
+
+            val parent = DocumentFile.fromTreeUri(this@PqcVpnActivity, parentUri)!!
+            Log.d(TAG, "Certs root folder: ${parent.name}")
+            val clientDir = parent.findFile(folderName)!!
+            val ca = parent.findFile("ca_cert.crt")!!
+            val cc = clientDir.findFile("client_cert.crt")!!
+            val ck = clientDir.findFile("client_key.key")!!
+
+            fun read(uri: Uri): String {
+                Log.d(TAG, "Reading file from URI: $uri")
+                return contentResolver.openInputStream(uri)!!
+                    .bufferedReader().readText()
+            }
+
+            val profile = VpnProfile("PQC Test - $folderName").apply {
+                mConnections[0].apply {
+                    mServerName = "48.209.35.108"
+                    mServerPort = "1194"
+                    mUseUdp = true
+                }
+                mExpectTLSCert = true
+                mCaFilename = "[[INLINE]]${read(ca.uri)}"
+                mClientCertFilename = "[[INLINE]]${read(cc.uri)}"
+                mClientKeyFilename = "[[INLINE]]${read(ck.uri)}"
+            }
+
+            Log.d(TAG, "Profile created for $folderName")
+
+            ProfileManager.getInstance(this@PqcVpnActivity).also { pm ->
+                Log.d(TAG, "Saving profile to ProfileManager")
+                pm.addProfile(profile)
+                ProfileManager.saveProfile(this@PqcVpnActivity, profile)
+                pm.saveProfileList(this@PqcVpnActivity)
+            }
+
+            updateStatus("Status: Starting VPN…")
+            Log.d(TAG, "Starting VPN via startForegroundService()")
+            ContextCompat.startForegroundService(
+                this@PqcVpnActivity,
+                profile.getStartServiceIntent(this@PqcVpnActivity, "PQC Start", true)
+            )
+        }
+    }
+
+    private fun updateStatus(msg: String) {
+        Log.d(TAG, "updateStatus() → $msg")
+        binding.textStatus.text = msg
     }
 }
