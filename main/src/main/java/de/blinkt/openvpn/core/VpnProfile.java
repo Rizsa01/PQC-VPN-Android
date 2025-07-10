@@ -70,7 +70,7 @@ public class VpnProfile implements Serializable, Cloneable {
     public int mVersion = 0;
     public String mServerName = "";
     public String mServerPort = "1194";
-
+    public String mCustomConfig = null;
 
     private static final long serialVersionUID = 7085688938959334563L;
     private static final String PQC_VPN_LOG_TAG_PROFILE = "PQC_VPN_Profile";

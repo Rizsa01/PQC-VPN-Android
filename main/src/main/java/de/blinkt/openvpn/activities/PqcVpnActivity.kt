@@ -38,12 +38,12 @@ class PqcVpnActivity : AppCompatActivity() {
         override fun onServiceConnected(name: ComponentName, service: IBinder) {
             Log.d(TAG, "Service connected: $name")
             Log.d(TAG, "onServiceConnected")
-
+            updateStatus("Status: Connected to VPN service.")
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
             Log.d(TAG, "Service disconnected: $name")
-
+            updateStatus("Status: Disconnected from VPN service.")
         }
     }
 
@@ -74,7 +74,7 @@ class PqcVpnActivity : AppCompatActivity() {
                         findClientFolders()
                     } catch (e: Exception) {
                         Log.e(TAG, "Error taking persistable URI permission", e)
-                        updateStatus("ERROR: Couldn't get folder permissions.")
+                        updateStatus("ERROR: Couldn't get folder permissions: ${e.localizedMessage}")
                     }
                 }
             } else {
@@ -157,6 +157,7 @@ class PqcVpnActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val uri = certsFolderUri ?: run {
                 Log.w(TAG, "certsFolderUri is null")
+                updateStatus("ERROR: No folder selected.")
                 return@launch
             }
             val parent = DocumentFile.fromTreeUri(this@PqcVpnActivity, uri)
@@ -224,8 +225,14 @@ class PqcVpnActivity : AppCompatActivity() {
 
             fun read(uri: Uri): String {
                 Log.d(TAG, "Reading file from URI: $uri")
-                return contentResolver.openInputStream(uri)!!
-                    .bufferedReader().readText()
+                return try {
+                    contentResolver.openInputStream(uri)!!
+                        .bufferedReader().readText()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed reading file", e)
+                    updateStatus("ERROR reading file: ${e.localizedMessage}")
+                    throw e
+                }
             }
 
             val profile = VpnProfile("PQC Test - $folderName").apply {
@@ -242,19 +249,25 @@ class PqcVpnActivity : AppCompatActivity() {
 
             Log.d(TAG, "Profile created for $folderName")
 
-            ProfileManager.getInstance(this@PqcVpnActivity).also { pm ->
-                Log.d(TAG, "Saving profile to ProfileManager")
-                pm.addProfile(profile)
-                ProfileManager.saveProfile(this@PqcVpnActivity, profile)
-                pm.saveProfileList(this@PqcVpnActivity)
-            }
+            try {
+                ProfileManager.getInstance(this@PqcVpnActivity).also { pm ->
+                    Log.d(TAG, "Saving profile to ProfileManager")
+                    pm.addProfile(profile)
+                    ProfileManager.saveProfile(this@PqcVpnActivity, profile)
+                    pm.saveProfileList(this@PqcVpnActivity)
+                }
 
-            updateStatus("Status: Starting VPN…")
-            Log.d(TAG, "Starting VPN via startForegroundService()")
-            ContextCompat.startForegroundService(
-                this@PqcVpnActivity,
-                profile.getStartServiceIntent(this@PqcVpnActivity, "PQC Start", true)
-            )
+                updateStatus("Status: Starting VPN…")
+                Log.d(TAG, "Starting VPN via startForegroundService()")
+                ContextCompat.startForegroundService(
+                    this@PqcVpnActivity,
+                    profile.getStartServiceIntent(this@PqcVpnActivity, "PQC Start", true)
+                )
+                updateStatus("Status: VPN connection started successfully.")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start VPN", e)
+                updateStatus("ERROR starting VPN: ${e.localizedMessage}")
+            }
         }
     }
 
