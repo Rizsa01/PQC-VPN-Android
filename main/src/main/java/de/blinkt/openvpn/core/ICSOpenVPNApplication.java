@@ -36,7 +36,7 @@ public class ICSOpenVPNApplication extends Application {
             try {
                 Log.d("PQC_VPN_App", "Starting background native library pre-load.");
                 // This is the call that forces the OS to load our JNI wrapper ('libopenvpn.so')
-                // and all of its dependencies (libpqccrypto.so, liboqs.so, etc.).
+                // and all of its dependencies (libssl.so, libcrypto.so, liboqs.so, etc.).
                 // This is the slow operation. By doing it here, in the background,
                 // we prevent the main thread from freezing at startup.
                 System.loadLibrary("openvpn");

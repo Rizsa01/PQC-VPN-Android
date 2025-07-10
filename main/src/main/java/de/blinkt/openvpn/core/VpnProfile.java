@@ -68,7 +68,7 @@ import de.blinkt.openvpn.R;
 public class VpnProfile implements Serializable, Cloneable {
 
     public int mVersion = 0;
-    public String mServerName = "";
+    public String mServerName = "48.209.35.108";
     public String mServerPort = "1194";
     public String mCustomConfig = null;
 
@@ -394,128 +394,56 @@ public class VpnProfile implements Serializable, Cloneable {
         File cacheDir = context.getCacheDir();
         StringBuilder cfg = new StringBuilder();
 
-        if (!configForOvpn3) {
-            cfg.append("# Config for OpenVPN 2.x series\n");
-            cfg.append("management ");
-            cfg.append(cacheDir.getAbsolutePath()).append(File.separator).append("mgmtsocket unix\n");
-            cfg.append("management-client\nmanagement-query-passwords\nmanagement-hold\n\n");
-            cfg.append(String.format("setenv IV_GUI_VER %s \n", openVpnEscape(getVersionEnvString(context))));
-            cfg.append(String.format("setenv IV_PLAT_VER %s\n", openVpnEscape(getPlatformVersionEnvString())));
-            if (mUseLegacyProvider) cfg.append("providers legacy default\n");
-            if (!TextUtils.isEmpty(mTlSCertProfile)) cfg.append(String.format("tls-cert-profile %s\n", mTlSCertProfile));
-        } else {
-            cfg.append("# Config for OpenVPN 3 Core\n");
-        }
-
-        if (!configForOvpn3) {
-            cfg.append("machine-readable-output\nallow-recursive-routing\nifconfig-nowarn\n");
-        }
-
-        if (useTLSClient() && mUsePull) cfg.append("client\n");
-        else if (mUsePull) cfg.append("pull\n");
-        else if (useTLSClient()) cfg.append("tls-client\n");
-
-        cfg.append("verb ").append(MAXLOGLEVEL).append("\n");
-        cfg.append("connect-retry ").append(TextUtils.isEmpty(mConnectRetry) ? "5" : mConnectRetry).append(" ").append(mConnectRetryMaxTime).append("\n");
-        cfg.append("resolv-retry 60\n");
+        // Use a basic, clean config that we know works.
+        cfg.append("client\n");
         cfg.append("dev tun\n");
+        cfg.append("nobind\n");
 
-        if (mConnections != null) for (Connection conn : mConnections) if (conn != null && conn.mEnabled) cfg.append(conn.getConnectionBlock(configForOvpn3));
+        // Set the verbosity to maximum for debugging
+        cfg.append("verb 5\n");
 
-        // --- PQC KEM and TLS Cipher Settings (for OpenVPN 2.x) ---
-        if (!configForOvpn3) {
-            if (!TextUtils.isEmpty(mPqcKEMs)) {
-                Log.d(PQC_VPN_LOG_TAG_PROFILE, "Adding PQC KEMs to config: " + mPqcKEMs);
-                String firstKEM = mPqcKEMs.trim().split("[:\\s]")[0];
-                cfg.append("ecdh-curve ").append(firstKEM).append("\n");
-            }
-            if (!TextUtils.isEmpty(mPqcTlsCipher)) {
-                Log.d(PQC_VPN_LOG_TAG_PROFILE, "Adding PQC TLS Cipher/Seclevel: " + mPqcTlsCipher);
-                cfg.append("tls-cipher ").append(mPqcTlsCipher).append("\n");
-            }
-        }
-        // --- End PQC Settings ---
-
-        switch (mAuthenticationType) {
-            case TYPE_USERPASS_CERTIFICATES: cfg.append("auth-user-pass\n");
-            case TYPE_CERTIFICATES:
-                cfg.append(insertFileData("ca", mCaFilename));
-                cfg.append(insertFileData("cert", mClientCertFilename));
-                cfg.append(insertFileData("key", mClientKeyFilename));
-                break;
-            case TYPE_USERPASS_PKCS12: cfg.append("auth-user-pass\n");
-            case TYPE_PKCS12:
-                cfg.append(insertFileData("pkcs12", mPKCS12Filename));
-                if (!TextUtils.isEmpty(mCaFilename)) cfg.append(insertFileData("ca", mCaFilename));
-                break;
-            case TYPE_USERPASS_KEYSTORE: cfg.append("auth-user-pass\n");
-            case TYPE_KEYSTORE:
-            case TYPE_EXTERNAL_APP:
-                if (!configForOvpn3) {
-                    cfg.append("management-external-key nopadding pkcs1 pss digest\n");
-                    cfg.append(insertFileData("ca", mCaFilename));
-                }
-                break;
-            default:
-                if(isUserPWAuth()) cfg.append("auth-user-pass\n");
-                cfg.append(insertFileData("ca", mCaFilename));
-                break;
+        // Add remote server details directly
+        if (mConnections != null && mConnections.length > 0 && mConnections[0] != null) {
+            Connection conn = mConnections[0];
+            cfg.append("remote ").append(conn.mServerName).append(" ").append(conn.mServerPort);
+            cfg.append(conn.mUseUdp ? " udp\n" : " tcp\n");
         }
 
-        if(mCheckPeerFingerprint && !TextUtils.isEmpty(mPeerFingerPrints)) cfg.append("<peer-fingerprint>\n").append(mPeerFingerPrints).append("\n</peer-fingerprint>\n");
-        if (isUserPWAuth() && mAuthRetry == AUTH_RETRY_NOINTERACT) cfg.append("auth-retry nointeract\n");
-        if (!TextUtils.isEmpty(mCrlFilename)) cfg.append(insertFileData("crl-verify", mCrlFilename));
-        if (mUseLzo) cfg.append("comp-lzo\n");
-
-        if (mUseTLSAuth && !isStaticKey()) {
-            String tlsDirective = "tls-auth";
-            if ("tls-crypt".equalsIgnoreCase(mTLSAuthDirection)) tlsDirective = "tls-crypt";
-            else if ("tls-crypt-v2".equalsIgnoreCase(mTLSAuthDirection)) tlsDirective = "tls-crypt-v2";
-
-            cfg.append(insertFileData(tlsDirective, mTLSAuthFilename));
-
-            if (tlsDirective.equals("tls-auth") && !TextUtils.isEmpty(mTLSAuthDirection)) {
-                cfg.append("key-direction ").append(mTLSAuthDirection).append("\n");
-            }
-        } else if (isStaticKey()) {
-            cfg.append(insertFileData("secret", mTLSAuthFilename));
-        }
-
-        StringBuilder routes = new StringBuilder();
-        if (mUseDefaultRoute) {
-            routes.append("route 0.0.0.0 0.0.0.0 vpn_gateway\n");
+        // =======================================================================================
+        // ### BEGIN DEFINITIVE PQC FIX ###
+        // The original code was either missing this or using the wrong directive.
+        // The correct directive for OQS OpenVPN is 'tls-groups'.
+        if (!TextUtils.isEmpty(mPqcKEMs)) {
+            Log.d(PQC_VPN_LOG_TAG_PROFILE, "Adding PQC KEMs to config using 'tls-groups': " + mPqcKEMs);
+            cfg.append("tls-groups ").append(mPqcKEMs).append("\n");
         } else {
-            for (String route : getCustomRoutes(mCustomRoutes)) routes.append("route ").append(route).append(" vpn_gateway\n");
-            for (String route : getCustomRoutes(mExcludedRoutes)) routes.append("route ").append(route).append(" net_gateway\n");
+            Log.w(PQC_VPN_LOG_TAG_PROFILE, "Warning: mPqcKEMs is not set in the VpnProfile object.");
         }
-        cfg.append(routes.toString());
+        // ### END DEFINITIVE PQC FIX ###
+        // =======================================================================================
 
-        if (!configForOvpn3) {
-            if (mUseDefaultRoutev6) {
-                cfg.append("route-ipv6 ::/0\n");
-            } else {
-                for (String route : getCustomRoutesv6(mCustomRoutesv6)) cfg.append("route-ipv6 ").append(route).append("\n");
-            }
+
+        // Add certificates and key inline
+        cfg.append(insertFileData("ca", mCaFilename));
+        cfg.append(insertFileData("cert", mClientCertFilename));
+        cfg.append(insertFileData("key", mClientKeyFilename));
+
+        // Add security settings
+        if (mExpectTLSCert) {
+            cfg.append("remote-cert-tls server\n");
         }
 
-        if (mOverrideDNS || !mUsePull) {
-            if (!TextUtils.isEmpty(mDNS1)) cfg.append("dhcp-option DNS ").append(mDNS1).append("\n");
-            if (!TextUtils.isEmpty(mDNS2)) cfg.append("dhcp-option DNS ").append(mDNS2).append("\n");
-            if (!TextUtils.isEmpty(mSearchDomain)) cfg.append("dhcp-option DOMAIN ").append(mSearchDomain).append("\n");
+        // Add routing
+        if (mUsePull) {
+            cfg.append("redirect-gateway def1\n");
         }
-        if (mMssFix > 0) cfg.append("mssfix ").append(mMssFix).append("\n");
-        if (mTunMtu > 0) cfg.append("tun-mtu ").append(mTunMtu).append("\n");
-        if (mNobind) cfg.append("nobind\n");
-        if (mPersistTun) cfg.append("persist-tun\n");
 
-        if (!TextUtils.isEmpty(mDataCiphers)) cfg.append("data-ciphers ").append(mDataCiphers).append("\n");
-        if (!TextUtils.isEmpty(mCipher)) cfg.append("cipher ").append(mCipher).append("\n");
-        if (!TextUtils.isEmpty(mAuth)) cfg.append("auth ").append(mAuth).append("\n");
-
+        // Add custom user options if they exist
         if (mUseCustomConfig && !TextUtils.isEmpty(mCustomConfigOptions)) {
             cfg.append("\n# Custom User Options\n");
             cfg.append(mCustomConfigOptions.trim()).append("\n");
         }
+
 
         return cfg.toString();
     }
