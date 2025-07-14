@@ -6,6 +6,7 @@ import android.net.Uri
 import android.net.VpnService
 import android.os.Bundle
 import android.os.IBinder
+import android.os.Parcelable // Ensure this import is present
 import android.util.Log
 import android.widget.ArrayAdapter
 import android.widget.Toast
@@ -22,6 +23,7 @@ import java.io.BufferedReader
 import java.io.IOException
 import java.io.InputStreamReader
 import de.blinkt.openvpn.databinding.ActivityPqcVpnBinding
+import java.util.UUID
 
 
 class PqcVpnActivity : AppCompatActivity(), VpnStatus.StateListener {
@@ -117,11 +119,12 @@ class PqcVpnActivity : AppCompatActivity(), VpnStatus.StateListener {
             Log.d(TAG, "Scanning files in directory: ${parent.name}")
             val found = parent.listFiles().filter {
                 val isDir = it.isDirectory
+                // Ensure we check for the config file now too
+                val hasConfig = it.findFile("android_client.config")?.exists() == true
                 val hasCert = it.findFile("client_cert.crt")?.exists() == true
                 val hasKey = it.findFile("client_key.key")?.exists() == true
-                // We no longer require ca.crt to be present for the folder to be listed
-                Log.d(TAG, "  - Checking folder '${it.name}': isDirectory=$isDir, hasCert=$hasCert, hasKey=$hasKey")
-                isDir && hasCert && hasKey
+                Log.d(TAG, "  - Checking folder '${it.name}': isDirectory=$isDir, hasConfig=$hasConfig, hasCert=$hasCert, hasKey=$hasKey")
+                isDir && hasConfig && hasCert && hasKey
             }.mapNotNull { it.name }
 
             withContext(Dispatchers.Main) {
@@ -208,78 +211,57 @@ class PqcVpnActivity : AppCompatActivity(), VpnStatus.StateListener {
             return
         }
 
-        updateStatus("Building profile with PQC parameters for '$folderName'...")
-        Log.d(TAG, "Building profile with explicit PQC parameters for KEM: $folderName")
+        updateStatus("Reading config files for '$folderName'...")
+        Log.d(TAG, "Building profile from custom config file for: $folderName")
 
         lifecycleScope.launch {
             try {
                 val profile = withContext(Dispatchers.IO) {
-                    // --- Step 1: Read the certificate files ---
+                    // --- Step 1: Read ALL the necessary files ---
+                    val customConfig = readTextFromFileInDir(baseUri, folderName, "android_client.config")
                     val caCert = readTextFromFileInDir(baseUri, folderName, "ca_cert.crt")
                     val clientCert = readTextFromFileInDir(baseUri, folderName, "client_cert.crt")
                     val clientKey = readTextFromFileInDir(baseUri, folderName, "client_key.key")
 
-                    if (caCert == null || clientCert == null || clientKey == null) {
+                    // Ensure all files were read successfully
+                    if (customConfig == null || caCert == null || clientCert == null || clientKey == null) {
                         withContext(Dispatchers.Main) {
-                            updateStatus("ERROR: ca_cert.crt, client_cert.crt, or client_key.key is missing!")
+                            updateStatus("ERROR: One or more required files (android_client.config, certs, key) are missing!")
                         }
                         return@withContext null
                     }
 
-                    // --- Step 2: Create and configure the profile programmatically ---
+                    // --- Step 2: Create a profile that USES the custom config ---
                     VpnProfile("PQC-$folderName").apply {
-                        // --- General Settings ---
-                        mUseCustomConfig = false
-
-                        // --- Connection Settings ---
-                        if (mConnections == null || mConnections.isEmpty()) {
-                            mConnections = arrayOf(Connection())
-                        }
-                        mConnections[0].mServerName = "48.209.35.108"
-                        mConnections[0].mServerPort = "1194"
-                        mConnections[0].mUseUdp = true
-
-                        // --- Standard Client Options ---
-                        mNobind = true
-                        mUsePull = true
-
-                        // --- Security Settings ---
-                        mCheckRemoteCN = true
-                        mExpectTLSCert = true
-                        mX509AuthType = VpnProfile.X509_VERIFY_TLSREMOTE_RDN
-
-                        //==================================================================
-                        // CRITICAL PQC SETTINGS - This is the definitive fix
-                        //================================----------------==================
-                        // TODO: Replace this placeholder with the value from your Linux client.config
-                        // It will likely be a list like "p256_falcon512:kyber512" or similar.
-                        mPqcKEMs = "p256_falcon512"
-
-                        // Set the verbosity to maximum to get all possible debug output
-                        mVerb = "5"
-                        //==================================================================
-
-                        // --- Embed Certificates and Key ---
+                        mUseCustomConfig = true
+                        mCustomConfigOptions = customConfig
                         mCaFilename = VpnProfile.INLINE_TAG + caCert
                         mClientCertFilename = VpnProfile.INLINE_TAG + clientCert
                         mClientKeyFilename = VpnProfile.INLINE_TAG + clientKey
+                        mPqcKEMs = "p256_mlkem512"
                     }
                 }
 
                 if (profile == null) { return@launch }
 
-                updateStatus("Profile created programmatically. Saving and starting service...")
-                Log.d(TAG, "VPN Profile successfully created: ${profile.name}")
+                updateStatus("Profile created from file. Starting service...")
+                Log.d(TAG, "VPN Profile successfully created from custom config: ${profile.name}")
 
                 val pm = ProfileManager.getInstance(this@PqcVpnActivity)
                 pm.addProfile(profile)
-                ProfileManager.saveProfile(this@PqcVpnActivity, profile)
                 pm.saveProfileList(this@PqcVpnActivity)
-                Log.d(TAG, "Profile saved to ProfileManager.")
+                Log.d(TAG, "Profile saved to local ProfileManager instance.")
 
-                val intent = profile.getStartServiceIntent(this@PqcVpnActivity, "PQC Start", true)
-                ContextCompat.startForegroundService(this@PqcVpnActivity, intent)
-                updateStatus("Waiting for tunnel response…")
+                val startVpnIntent = Intent(this@PqcVpnActivity, OpenVPNService::class.java).apply {
+                    action = OpenVPNService.START_SERVICE
+
+                    // The fix for the "Overload resolution ambiguity" build error
+                    putExtra(OpenVPNService.EXTRA_VPN_PROFILE_OBJECT, profile as Parcelable)
+
+                    putExtra(OpenVPNService.EXTRA_START_REASON, "User initiated PQC connection")
+                }
+                ContextCompat.startForegroundService(this@PqcVpnActivity, startVpnIntent)
+                updateStatus("Start signal sent to service. Waiting for tunnel response…")
 
             } catch (e: Exception) {
                 Log.e(TAG, "A critical exception occurred during VPN start process.", e)
@@ -293,7 +275,6 @@ class PqcVpnActivity : AppCompatActivity(), VpnStatus.StateListener {
 
     override fun setConnectedVPN(uuid: String?) {
         Log.d(TAG, "StateListener: Service reports new connected VPN with UUID: $uuid")
-        // This is called when the service acknowledges the profile.
     }
 
     override fun updateState(

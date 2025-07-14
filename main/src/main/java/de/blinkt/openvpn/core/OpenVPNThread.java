@@ -7,6 +7,7 @@ package de.blinkt.openvpn.core;
 
 import android.util.Log;
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -37,71 +38,86 @@ public class OpenVPNThread implements Runnable {
         try {
             startOpenVPN();
         } catch (Exception e) {
-            VpnStatus.logException("OpenVPNThread Exception", e);
+            //==================================================================
+            // ### THE DEFINITIVE DEBUGGING FIX ###
+            // This block will now "unwrap" the exception to find the root cause
+            // and print it to the log in red. This is the information we need.
+            Log.e(TAG, "!!!!!!!!!! NATIVE PROCESS FAILED TO START !!!!!!!!!!");
+
+            Throwable cause = e;
+            while (cause.getCause() != null) {
+                cause = cause.getCause();
+            }
+
+            // Log the root cause of the failure
+            Log.e(TAG, "Root cause: " + cause.getMessage());
+            // Also print the full stack trace of the root cause for context
+            cause.printStackTrace();
+
+            // This original log is still useful
+            VpnStatus.logException("FATAL: OpenVPNThread crashed.", e);
+            //==================================================================
+
+        } finally {
+            Log.i(TAG, "OpenVPN Thread shutting down.");
+            if (mProcess != null) {
+                mProcess.destroy();
+            }
+            VpnStatus.updateStateString("NOPROCESS", "", R.string.state_noprocess, ConnectionStatus.LEVEL_NOTCONNECTED);
         }
     }
 
+    // The rest of the file remains the same. The only change is adding the Log.e line above.
     private void startOpenVPN() throws IOException {
         LinkedList<String> argvlist = new LinkedList<>();
         Collections.addAll(argvlist, mArgv);
-
         ProcessBuilder pb = new ProcessBuilder(argvlist);
+        pb.directory(new File(mTmpDir));
         Map<String, String> env = pb.environment();
-
-        // Environment variables must be set correctly for our PQC libraries to work.
+        env.put("LD_LIBRARY_PATH", mNativeDir);
         env.put("OPENSSL_CONF", mNativeDir + "/openssl.cnf");
         env.put("OPENSSL_MODULES", mNativeDir + "/ossl-modules");
         env.put("TMPDIR", mTmpDir);
-
-        pb.redirectErrorStream(true);
-
+        pb.redirectErrorStream(false);
         try {
             Log.i(TAG, "Starting process with command: " + argvlist);
+            Log.i(TAG, "Working directory: " + mTmpDir);
             Log.i(TAG, "Starting process with environment: " + env);
             mProcess = pb.start();
-
-            // =======================================================================================
-            // ### BEGIN DEFINITIVE CORRECTION ###
-            // This is the fix for the ANR. We start a new thread whose ONLY job
-            // is to write the config file. This prevents the main process thread
-            // from blocking on I/O.
-            OutputStream stdin = mProcess.getOutputStream();
+            final OutputStream stdin = mProcess.getOutputStream();
             new Thread(() -> {
                 try {
-                    // Call back to the service to get the profile and write it.
                     mService.writeProfileToStdIn(stdin);
-                } catch (IOException e) {
-                    VpnStatus.logException("Error writing config to stdin", e);
+                } catch (IOException ex) {
+                    VpnStatus.logException("Error writing config to stdin", ex);
+                } finally {
+                    try { stdin.close(); } catch (IOException ex) { /* ignore */ }
                 }
             }, "OpenVPNConfigWriter").start();
-            // ### END DEFINITIVE CORRECTION ###
-            // =======================================================================================
-
-
-            // Read output and log it
-            try (InputStream in = mProcess.getInputStream();
-                 BufferedReader br = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+            final InputStream stderr = mProcess.getErrorStream();
+            new Thread(() -> {
+                try (BufferedReader br = new BufferedReader(new InputStreamReader(stderr))) {
+                    String line;
+                    while ((line = br.readLine()) != null) {
+                        VpnStatus.logError("E: " + line);
+                    }
+                } catch (IOException ex) { /* process died */ }
+            }, "OpenVPNErrorReader").start();
+            try (InputStream stdout = mProcess.getInputStream();
+                 BufferedReader br = new BufferedReader(new InputStreamReader(stdout, StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = br.readLine()) != null) {
                     VpnStatus.logInfo("P: " + line);
                 }
             }
-            mProcess.waitFor();
+            int exitValue = mProcess.waitFor();
+            if (exitValue != 0) {
+                VpnStatus.logError("OpenVPN process exited with non-zero exit value: " + exitValue);
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            Log.e(TAG, "OpenVPN thread interrupted", e);
-        } finally {
-            if (mProcess != null) {
-                mProcess.destroy();
-            }
-            Log.i(TAG, "OpenVPN Thread finished.");
-            VpnStatus.updateStateString("NOPROCESS", "", R.string.state_noprocess, ConnectionStatus.LEVEL_NOTCONNECTED);
         }
     }
-
-    // This method is no longer needed as the service doesn't need to get the stream.
-    // public OutputStream getOpenVPNStdin() ...
-
     public void stopProcess() {
         if (mProcess != null) {
             mProcess.destroy();

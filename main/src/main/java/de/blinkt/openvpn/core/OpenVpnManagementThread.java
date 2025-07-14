@@ -132,7 +132,7 @@ public class OpenVpnManagementThread implements Runnable, OpenVPNManagement {
         try (InputStream instream = mSocket.getInputStream()) {
             // Send initialization commands
             managementCommand("version 3\n");
-            managementCommand("hold release\n");
+            //managementCommand("hold release\n");
             managementCommand("state on\n");
             managementCommand("bytecount " + mBytecountInterval + "\n");
 

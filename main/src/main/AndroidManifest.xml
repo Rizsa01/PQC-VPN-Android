@@ -27,7 +27,8 @@
         android:label="@string/app"
         android:supportsRtl="true"
         android:theme="@style/blinkt"
-        tools:ignore="UnusedAttribute">
+        tools:ignore="UnusedAttribute"
+        android:extractNativeLibs="true">
 
         <meta-data
             android:name="android.content.APP_RESTRICTIONS"
@@ -46,10 +47,10 @@
 
         <service
             android:name=".core.OpenVPNService"
-            android:exported="true"
+            android:exported="false"
             android:permission="android.permission.BIND_VPN_SERVICE"
             android:foregroundServiceType="specialUse|connectedDevice"
-            android:process=":openvpn">
+            android:process="de.blinkt.openvpn.PROCESS_OPENVPN">
             <intent-filter>
                 <action android:name="android.net.VpnService" />
             </intent-filter>
@@ -61,7 +62,7 @@
         <service
             android:name=".core.OpenVPNStatusService"
             android:exported="false"
-            android:process=":openvpn" />
+            android:process="de.blinkt.openvpn.PROCESS_OPENVPN" />
 
     </application>
 

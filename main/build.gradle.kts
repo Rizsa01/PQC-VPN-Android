@@ -21,6 +21,7 @@ plugins {
     id("com.android.application")
     id("kotlin-android")
     id("checkstyle")
+    id ("kotlin-parcelize")
 }
 
 configure<BaseAppModuleExtension> {
