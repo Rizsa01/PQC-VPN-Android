@@ -14,6 +14,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.net.VpnService;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Parcel;
@@ -473,20 +474,33 @@ public class VpnProfile implements Serializable, Cloneable, Parcelable {
 
         if (mUseCustomConfig) {
             Log.d("PQC_VPN_Profile", "Writing custom config from mCustomConfigOptions to process stdin.");
+
+            // Write the clean base config first
             pw.write(mCustomConfigOptions);
-            pw.write("\n");
+            pw.write("\n"); // Ensure there's a newline
+
+            // Now, dynamically add the other required directives
             if (!TextUtils.isEmpty(mPqcKEMs)) {
-                Log.d("PQC_VPN_Profile", "Dynamically adding PQC KEMs to config using 'tls-groups': " + mPqcKEMs);
+                Log.d("PQC_VPN_Profile", "Dynamically adding PQC KEMs: " + mPqcKEMs);
                 pw.printf("tls-groups %s\n", mPqcKEMs);
             }
+
+            // Add the inline certificates and keys
+            Log.d("PQC_VPN_Profile", "Adding inline CA certificate.");
             pw.write(insertFileData("ca", mCaFilename));
+
+            Log.d("PQC_VPN_Profile", "Adding inline client certificate.");
             pw.write(insertFileData("cert", mClientCertFilename));
+
+            Log.d("PQC_VPN_Profile", "Adding inline client key.");
             pw.write(insertFileData("key", mClientKeyFilename));
+
         } else {
-            Log.e("PQC_VPN_Profile", "Programmatic config generation is not supported. mUseCustomConfig must be true.");
+            Log.e("PQC_VPN_Profile", "Programmatic config generation not supported. mUseCustomConfig must be true.");
             pw.write("# Programmatic config generation not supported in this mode.\n");
         }
         pw.flush();
+        Log.d("PQC_VPN_Profile", "Finished writing config to stdin.");
     }
 
     public String getPlatformVersionEnvString() {
@@ -807,4 +821,78 @@ public class VpnProfile implements Serializable, Cloneable, Parcelable {
             return new VpnProfile[size];
         }
     };
+
+    public void addProfileToBuilder(VpnService.Builder builder, Context context) {
+        Log.d("PQC_VPN_Profile", "Configuring VpnService.Builder from profile.");
+
+        // Set the session name for the VPN interface
+        builder.setSession(mName);
+
+        // Set the Maximum Transmission Unit (MTU) if specified
+        if (mTunMtu > 0) {
+            builder.setMtu(mTunMtu);
+            Log.d("PQC_VPN_Profile", "Setting MTU: " + mTunMtu);
+        }
+
+        // Add DNS servers
+        if (mOverrideDNS) {
+            if (!TextUtils.isEmpty(mDNS1)) {
+                try {
+                    builder.addDnsServer(mDNS1);
+                    Log.d("PQC_VPN_Profile", "Adding DNS Server: " + mDNS1);
+                } catch (IllegalArgumentException e) {
+                    VpnStatus.logError(Integer.parseInt("Failed to add DNS server: " + mDNS1), e);
+                }
+            }
+            if (!TextUtils.isEmpty(mDNS2)) {
+                try {
+                    builder.addDnsServer(mDNS2);
+                    Log.d("PQC_VPN_Profile", "Adding DNS Server: " + mDNS2);
+                } catch (IllegalArgumentException e) {
+                    VpnStatus.logError(Integer.parseInt("Failed to add DNS server: " + mDNS2), e);
+                }
+            }
+            if (!TextUtils.isEmpty(mSearchDomain)) {
+                builder.addSearchDomain(mSearchDomain);
+                Log.d("PQC_VPN_Profile", "Adding DNS Search Domain: " + mSearchDomain);
+            }
+        }
+
+        // Configure IPv4 address and routes
+        if (!TextUtils.isEmpty(mIPv4Address)) {
+            try {
+                String[] parts = mIPv4Address.split("/");
+                if (parts.length == 2) {
+                    builder.addAddress(parts[0], Integer.parseInt(parts[1]));
+                    Log.d("PQC_VPN_Profile", "Setting IPv4 Address: " + mIPv4Address);
+                }
+            } catch (Exception e) {
+                VpnStatus.logError(Integer.parseInt("Failed to set IPv4 address: " + mIPv4Address), e);
+            }
+        }
+
+        if (mUseDefaultRoute) {
+            builder.addRoute("0.0.0.0", 0);
+            Log.d("PQC_VPN_Profile", "Adding default IPv4 route.");
+        }
+
+        // Configure IPv6 address and routes
+        if (!TextUtils.isEmpty(mIPv6Address)) {
+            try {
+                String[] parts = mIPv6Address.split("/");
+                if (parts.length == 2) {
+                    builder.addAddress(parts[0], Integer.parseInt(parts[1]));
+                    Log.d("PQC_VPN_Profile", "Setting IPv6 Address: " + mIPv6Address);
+                }
+            } catch (Exception e) {
+                VpnStatus.logError(Integer.parseInt("Failed to set IPv6 address: " + mIPv6Address), e);
+            }
+        }
+
+        if (mUseDefaultRoutev6) {
+            builder.addRoute("::", 0);
+            Log.d("PQC_VPN_Profile", "Adding default IPv6 route.");
+        }
+    }
+
 }
