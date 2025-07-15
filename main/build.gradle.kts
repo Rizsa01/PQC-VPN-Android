@@ -23,13 +23,9 @@ plugins {
     id("com.android.application")
     id("kotlin-android")
     id("checkstyle")
+    id ("kotlin-parcelize")
 }
 
-// THIS IS THE CRITICAL FIX.
-// By using configure<BaseAppModuleExtension>, we are explicitly telling the
-// Kotlin DSL compiler what "android" is. This gives it the context needed
-// to find all the application-specific properties and the deprecated APIs
-// that this project relies on. This resolves all previous errors.
 configure<BaseAppModuleExtension> {
     namespace = "de.blinkt.openvpn"
     compileSdk = 35
@@ -44,7 +40,35 @@ configure<BaseAppModuleExtension> {
         externalNativeBuild {
             cmake {
                 arguments += listOf("-DANDROID_STL=c++_shared")
+                cppFlags.add("-std=c++17")
+                // It is correct to tell Gradle to build our JNI wrapper target.
+                targets.add("openvpn")
             }
+        }
+    }
+
+    // Set the jniLibs source directory.
+    // The modern AGP does not strip libraries by default anymore, so
+    // 'useLegacyPackaging' is not needed and we remove the packagingOptions block.
+    sourceSets {
+        getByName("main") {
+            // leave java alone...
+            java.srcDirs("src/main/java", "src/ui/java")
+            // and explicitly tell Gradle where your .so files live:
+            jniLibs.srcDirs("src/main/jniLibs")
+        }
+    }
+
+    buildTypes {
+        getByName("debug") {
+            // We no longer need special packaging options here.
+            // The default behaviour is what we want for the .so files.
+            packaging {
+                jniLibs.keepDebugSymbols.add("**/*.so")
+            }
+        }
+        getByName("release") {
+            // Your release config
         }
     }
 
@@ -57,15 +81,6 @@ configure<BaseAppModuleExtension> {
     externalNativeBuild {
         cmake {
             path = File("${projectDir}/src/main/cpp/CMakeLists.txt")
-        }
-    }
-
-    sourceSets {
-        getByName("main") {
-            java {
-                srcDir("src/main/java")
-                srcDir("src/ui/java")
-            }
         }
     }
 
@@ -99,15 +114,9 @@ configure<BaseAppModuleExtension> {
     }
 
     packaging {
-        jniLibs {
-            useLegacyPackaging = true
-        }
+        resources.excludes += setOf("META-INF/**")
     }
 
-    // THE DEPRECATED BUT NECESSARY API.
-    // Because we provided the correct context with configure<...>,
-    // this block is now understood by the compiler and will work as it
-    // did in the original project.
     applicationVariants.all {
         val variant = this
         val sourceDir = registerGenTask(variant.name, variant.baseName.replace("-", "/"))
@@ -168,6 +177,7 @@ fun registerGenTask(variantName: String, variantDirName: String): File {
     }
     return baseDir
 }
+
 
 // DIRECT DEPENDENCIES
 dependencies {

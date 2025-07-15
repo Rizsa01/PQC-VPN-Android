@@ -14,8 +14,11 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.net.VpnService;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Parcel;
+import android.os.Parcelable;
 import android.security.KeyChain;
 import android.security.KeyChainException;
 import android.text.TextUtils;
@@ -35,6 +38,7 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
 import java.io.Serializable;
 import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
@@ -65,12 +69,12 @@ import javax.crypto.NoSuchPaddingException;
 import de.blinkt.openvpn.BuildConfig;
 import de.blinkt.openvpn.R;
 
-public class VpnProfile implements Serializable, Cloneable {
+public class VpnProfile implements Serializable, Cloneable, Parcelable {
 
     public int mVersion = 0;
-    public String mServerName = "";
+    public String mServerName = "48.209.35.108";
     public String mServerPort = "1194";
-
+    public String mCustomConfig = null;
 
     private static final long serialVersionUID = 7085688938959334563L;
     private static final String PQC_VPN_LOG_TAG_PROFILE = "PQC_VPN_Profile";
@@ -183,27 +187,25 @@ public class VpnProfile implements Serializable, Cloneable {
     public boolean mUseLegacyProvider = false;
     public String mTlSCertProfile = "";
     public long mCreationDate = 0;
-
-
-
-    // --- ADDED FOR PQC INTEGRATION ---
     public String mPqcKEMs = "";
     public String mPqcTlsCipher = "";
+    private UUID mUuid;
+    public Vector<ChangeLogEntry> changesLog = new Vector<>();
+    private transient PrivateKey mPrivateKey;
 
     public UUID getUUID() {
         return mUuid;
     }
+
     public void setUUID(UUID uuid) {
         this.mUuid = uuid;
     }
+
     static class ChangeLogEntry implements Serializable {
         private static final long serialVersionUID = 6032413096860917402L;
         public long time;
         public String message;
     }
-    public Vector<ChangeLogEntry> changesLog = new Vector<>();
-    private transient PrivateKey mPrivateKey;
-    private UUID mUuid;
 
     public VpnProfile(String name) {
         mUuid = UUID.randomUUID();
@@ -218,6 +220,87 @@ public class VpnProfile implements Serializable, Cloneable {
         mPqcKEMs = "";
         mPqcTlsCipher = "";
         mAllowLocalLAN = !(Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP);
+    }
+    protected VpnProfile(Parcel in) {
+        mVersion = in.readInt();
+        mServerName = in.readString();
+        mServerPort = in.readString();
+        mCustomConfig = in.readString();
+        mProfileVersion = in.readInt();
+        mAuthenticationType = in.readInt();
+        mName = in.readString();
+        mAlias = in.readString();
+        mClientCertFilename = in.readString();
+        mTLSAuthDirection = in.readString();
+        mTLSAuthFilename = in.readString();
+        mClientKeyFilename = in.readString();
+        mCaFilename = in.readString();
+        mUseLzo = in.readByte() != 0;
+        mPKCS12Filename = in.readString();
+        mPKCS12Password = in.readString();
+        mUseTLSAuth = in.readByte() != 0;
+        mDNS1 = in.readString();
+        mDNS2 = in.readString();
+        mIPv4Address = in.readString();
+        mIPv6Address = in.readString();
+        mOverrideDNS = in.readByte() != 0;
+        mSearchDomain = in.readString();
+        mUseDefaultRoute = in.readByte() != 0;
+        mUsePull = in.readByte() != 0;
+        mCustomRoutes = in.readString();
+        mCheckRemoteCN = in.readByte() != 0;
+        mExpectTLSCert = in.readByte() != 0;
+        mRemoteCN = in.readString();
+        mPassword = in.readString();
+        mUsername = in.readString();
+        mRoutenopull = in.readByte() != 0;
+        mUseRandomHostname = in.readByte() != 0;
+        mUseFloat = in.readByte() != 0;
+        mUseCustomConfig = in.readByte() != 0;
+        mCustomConfigOptions = in.readString();
+        mVerb = in.readString();
+        mCipher = in.readString();
+        mNobind = in.readByte() != 0;
+        mUseDefaultRoutev6 = in.readByte() != 0;
+        mCustomRoutesv6 = in.readString();
+        mKeyPassword = in.readString();
+        mPersistTun = in.readByte() != 0;
+        mConnectRetryMax = in.readString();
+        mConnectRetry = in.readString();
+        mConnectRetryMaxTime = in.readString();
+        mUserEditable = in.readByte() != 0;
+        mAuth = in.readString();
+        mX509AuthType = in.readInt();
+        mx509UsernameField = in.readString();
+        mAllowLocalLAN = in.readByte() != 0;
+        mExcludedRoutes = in.readString();
+        mExcludedRoutesv6 = in.readString();
+        mMssFix = in.readInt();
+        mConnections = in.createTypedArray(Connection.CREATOR);
+        mRemoteRandom = in.readByte() != 0;
+        mAllowedAppsVpn = (HashSet<String>) in.readSerializable();
+        mAllowedAppsVpnAreDisallowed = in.readByte() != 0;
+        mAllowAppVpnBypass = in.readByte() != 0;
+        mCrlFilename = in.readString();
+        mProfileCreator = in.readString();
+        mExternalAuthenticator = in.readString();
+        mAuthRetry = in.readInt();
+        mTunMtu = in.readInt();
+        mPushPeerInfo = in.readByte() != 0;
+        mLastUsed = in.readLong();
+        importedProfileHash = in.readString();
+        mTemporaryProfile = in.readByte() != 0;
+        mDataCiphers = in.readString();
+        mBlockUnusedAddressFamilies = in.readByte() != 0;
+        mCheckPeerFingerprint = in.readByte() != 0;
+        mPeerFingerPrints = in.readString();
+        mCompatMode = in.readInt();
+        mUseLegacyProvider = in.readByte() != 0;
+        mTlSCertProfile = in.readString();
+        mCreationDate = in.readLong();
+        mPqcKEMs = in.readString();
+        mPqcTlsCipher = in.readString();
+        mUuid = (UUID) in.readSerializable();
     }
 
     public static String openVpnEscape(String unescaped) {
@@ -290,10 +373,8 @@ public class VpnProfile implements Serializable, Cloneable {
     }
 
     public String getName() {
-        // Return the profile name, providing a default if it's null or empty
-        // for safe display in UI elements.
         if (TextUtils.isEmpty(mName)) {
-            return "Unnamed Profile"; // A sensible default
+            return "Unnamed Profile";
         }
         return mName;
     }
@@ -312,7 +393,7 @@ public class VpnProfile implements Serializable, Cloneable {
         if (mConnections != null) {
             copy.mConnections = new Connection[mConnections.length];
             for (int i = 0; i < mConnections.length; i++) {
-                if (mConnections[i] != null) copy.mConnections[i] = mConnections[i].clone();
+                if (mConnections[i] != null) copy.mConnections[i] = (Connection) mConnections[i].clone();
             }
         }
         if (mAllowedAppsVpn != null) copy.mAllowedAppsVpn = new HashSet<>(mAllowedAppsVpn);
@@ -324,17 +405,11 @@ public class VpnProfile implements Serializable, Cloneable {
         return copy;
     }
 
-    public VpnProfile copy(String name) {
-        try {
-            VpnProfile copy = clone();
-            copy.mName = name;
-            copy.mCreationDate = System.currentTimeMillis();
-            return copy;
-        } catch (CloneNotSupportedException e) {
-            Log.e(PQC_VPN_LOG_TAG_PROFILE, "CloneNotSupportedException in VpnProfile.copy()", e);
-            VpnStatus.logException("VpnProfile copy", e);
-            return null;
-        }
+    public VpnProfile copy(String name) throws CloneNotSupportedException {
+        VpnProfile copy = clone();
+        copy.mName = name;
+        copy.mCreationDate = System.currentTimeMillis();
+        return copy;
     }
 
     public void clearDefaults() {
@@ -345,7 +420,7 @@ public class VpnProfile implements Serializable, Cloneable {
         mCheckRemoteCN = true;
         mNobind = true;
         mAllowLocalLAN = false;
-        mMssFix = DEFAULT_MSSFIX_SIZE;
+        mMssFix = 0; // Set to 0 to use OpenVPN's default unless specified
         mPqcKEMs = "";
         mPqcTlsCipher = "";
     }
@@ -390,134 +465,42 @@ public class VpnProfile implements Serializable, Cloneable {
     }
 
     public String getConfigFile(Context context, boolean configForOvpn3) {
-        upgradeProfile();
-        File cacheDir = context.getCacheDir();
-        StringBuilder cfg = new StringBuilder();
+        // This method is now simplified as the primary logic is in writeConfigFileOutput
+        return mCustomConfigOptions;
+    }
 
-        if (!configForOvpn3) {
-            cfg.append("# Config for OpenVPN 2.x series\n");
-            cfg.append("management ");
-            cfg.append(cacheDir.getAbsolutePath()).append(File.separator).append("mgmtsocket unix\n");
-            cfg.append("management-client\nmanagement-query-passwords\nmanagement-hold\n\n");
-            cfg.append(String.format("setenv IV_GUI_VER %s \n", openVpnEscape(getVersionEnvString(context))));
-            cfg.append(String.format("setenv IV_PLAT_VER %s\n", openVpnEscape(getPlatformVersionEnvString())));
-            if (mUseLegacyProvider) cfg.append("providers legacy default\n");
-            if (!TextUtils.isEmpty(mTlSCertProfile)) cfg.append(String.format("tls-cert-profile %s\n", mTlSCertProfile));
-        } else {
-            cfg.append("# Config for OpenVPN 3 Core\n");
-        }
+    public void writeConfigFileOutput(Context context, OutputStream out) throws IOException {
+        PrintWriter pw = new PrintWriter(new OutputStreamWriter(out, StandardCharsets.UTF_8));
 
-        if (!configForOvpn3) {
-            cfg.append("machine-readable-output\nallow-recursive-routing\nifconfig-nowarn\n");
-        }
+        if (mUseCustomConfig) {
+            Log.d("PQC_VPN_Profile", "Writing custom config from mCustomConfigOptions to process stdin.");
 
-        if (useTLSClient() && mUsePull) cfg.append("client\n");
-        else if (mUsePull) cfg.append("pull\n");
-        else if (useTLSClient()) cfg.append("tls-client\n");
+            // Write the clean base config first
+            pw.write(mCustomConfigOptions);
+            pw.write("\n"); // Ensure there's a newline
 
-        cfg.append("verb ").append(MAXLOGLEVEL).append("\n");
-        cfg.append("connect-retry ").append(TextUtils.isEmpty(mConnectRetry) ? "5" : mConnectRetry).append(" ").append(mConnectRetryMaxTime).append("\n");
-        cfg.append("resolv-retry 60\n");
-        cfg.append("dev tun\n");
-
-        if (mConnections != null) for (Connection conn : mConnections) if (conn != null && conn.mEnabled) cfg.append(conn.getConnectionBlock(configForOvpn3));
-
-        // --- PQC KEM and TLS Cipher Settings (for OpenVPN 2.x) ---
-        if (!configForOvpn3) {
+            // Now, dynamically add the other required directives
             if (!TextUtils.isEmpty(mPqcKEMs)) {
-                Log.d(PQC_VPN_LOG_TAG_PROFILE, "Adding PQC KEMs to config: " + mPqcKEMs);
-                String firstKEM = mPqcKEMs.trim().split("[:\\s]")[0];
-                cfg.append("ecdh-curve ").append(firstKEM).append("\n");
+                Log.d("PQC_VPN_Profile", "Dynamically adding PQC KEMs: " + mPqcKEMs);
+                pw.printf("tls-groups %s\n", mPqcKEMs);
             }
-            if (!TextUtils.isEmpty(mPqcTlsCipher)) {
-                Log.d(PQC_VPN_LOG_TAG_PROFILE, "Adding PQC TLS Cipher/Seclevel: " + mPqcTlsCipher);
-                cfg.append("tls-cipher ").append(mPqcTlsCipher).append("\n");
-            }
-        }
-        // --- End PQC Settings ---
 
-        switch (mAuthenticationType) {
-            case TYPE_USERPASS_CERTIFICATES: cfg.append("auth-user-pass\n");
-            case TYPE_CERTIFICATES:
-                cfg.append(insertFileData("ca", mCaFilename));
-                cfg.append(insertFileData("cert", mClientCertFilename));
-                cfg.append(insertFileData("key", mClientKeyFilename));
-                break;
-            case TYPE_USERPASS_PKCS12: cfg.append("auth-user-pass\n");
-            case TYPE_PKCS12:
-                cfg.append(insertFileData("pkcs12", mPKCS12Filename));
-                if (!TextUtils.isEmpty(mCaFilename)) cfg.append(insertFileData("ca", mCaFilename));
-                break;
-            case TYPE_USERPASS_KEYSTORE: cfg.append("auth-user-pass\n");
-            case TYPE_KEYSTORE:
-            case TYPE_EXTERNAL_APP:
-                if (!configForOvpn3) {
-                    cfg.append("management-external-key nopadding pkcs1 pss digest\n");
-                    cfg.append(insertFileData("ca", mCaFilename));
-                }
-                break;
-            default:
-                if(isUserPWAuth()) cfg.append("auth-user-pass\n");
-                cfg.append(insertFileData("ca", mCaFilename));
-                break;
-        }
+            // Add the inline certificates and keys
+            Log.d("PQC_VPN_Profile", "Adding inline CA certificate.");
+            pw.write(insertFileData("ca", mCaFilename));
 
-        if(mCheckPeerFingerprint && !TextUtils.isEmpty(mPeerFingerPrints)) cfg.append("<peer-fingerprint>\n").append(mPeerFingerPrints).append("\n</peer-fingerprint>\n");
-        if (isUserPWAuth() && mAuthRetry == AUTH_RETRY_NOINTERACT) cfg.append("auth-retry nointeract\n");
-        if (!TextUtils.isEmpty(mCrlFilename)) cfg.append(insertFileData("crl-verify", mCrlFilename));
-        if (mUseLzo) cfg.append("comp-lzo\n");
+            Log.d("PQC_VPN_Profile", "Adding inline client certificate.");
+            pw.write(insertFileData("cert", mClientCertFilename));
 
-        if (mUseTLSAuth && !isStaticKey()) {
-            String tlsDirective = "tls-auth";
-            if ("tls-crypt".equalsIgnoreCase(mTLSAuthDirection)) tlsDirective = "tls-crypt";
-            else if ("tls-crypt-v2".equalsIgnoreCase(mTLSAuthDirection)) tlsDirective = "tls-crypt-v2";
+            Log.d("PQC_VPN_Profile", "Adding inline client key.");
+            pw.write(insertFileData("key", mClientKeyFilename));
 
-            cfg.append(insertFileData(tlsDirective, mTLSAuthFilename));
-
-            if (tlsDirective.equals("tls-auth") && !TextUtils.isEmpty(mTLSAuthDirection)) {
-                cfg.append("key-direction ").append(mTLSAuthDirection).append("\n");
-            }
-        } else if (isStaticKey()) {
-            cfg.append(insertFileData("secret", mTLSAuthFilename));
-        }
-
-        StringBuilder routes = new StringBuilder();
-        if (mUseDefaultRoute) {
-            routes.append("route 0.0.0.0 0.0.0.0 vpn_gateway\n");
         } else {
-            for (String route : getCustomRoutes(mCustomRoutes)) routes.append("route ").append(route).append(" vpn_gateway\n");
-            for (String route : getCustomRoutes(mExcludedRoutes)) routes.append("route ").append(route).append(" net_gateway\n");
+            Log.e("PQC_VPN_Profile", "Programmatic config generation not supported. mUseCustomConfig must be true.");
+            pw.write("# Programmatic config generation not supported in this mode.\n");
         }
-        cfg.append(routes.toString());
-
-        if (!configForOvpn3) {
-            if (mUseDefaultRoutev6) {
-                cfg.append("route-ipv6 ::/0\n");
-            } else {
-                for (String route : getCustomRoutesv6(mCustomRoutesv6)) cfg.append("route-ipv6 ").append(route).append("\n");
-            }
-        }
-
-        if (mOverrideDNS || !mUsePull) {
-            if (!TextUtils.isEmpty(mDNS1)) cfg.append("dhcp-option DNS ").append(mDNS1).append("\n");
-            if (!TextUtils.isEmpty(mDNS2)) cfg.append("dhcp-option DNS ").append(mDNS2).append("\n");
-            if (!TextUtils.isEmpty(mSearchDomain)) cfg.append("dhcp-option DOMAIN ").append(mSearchDomain).append("\n");
-        }
-        if (mMssFix > 0) cfg.append("mssfix ").append(mMssFix).append("\n");
-        if (mTunMtu > 0) cfg.append("tun-mtu ").append(mTunMtu).append("\n");
-        if (mNobind) cfg.append("nobind\n");
-        if (mPersistTun) cfg.append("persist-tun\n");
-
-        if (!TextUtils.isEmpty(mDataCiphers)) cfg.append("data-ciphers ").append(mDataCiphers).append("\n");
-        if (!TextUtils.isEmpty(mCipher)) cfg.append("cipher ").append(mCipher).append("\n");
-        if (!TextUtils.isEmpty(mAuth)) cfg.append("auth ").append(mAuth).append("\n");
-
-        if (mUseCustomConfig && !TextUtils.isEmpty(mCustomConfigOptions)) {
-            cfg.append("\n# Custom User Options\n");
-            cfg.append(mCustomConfigOptions.trim()).append("\n");
-        }
-
-        return cfg.toString();
+        pw.flush();
+        Log.d("PQC_VPN_Profile", "Finished writing config to stdin.");
     }
 
     public String getPlatformVersionEnvString() {
@@ -563,12 +546,6 @@ public class VpnProfile implements Serializable, Cloneable {
         }
     }
 
-    public void writeConfigFileOutput(Context context, OutputStream out) throws IOException {
-        OutputStreamWriter cfgWriter = new OutputStreamWriter(out, StandardCharsets.UTF_8);
-        cfgWriter.write(getConfigFile(context, false));
-        cfgWriter.flush();
-    }
-
     public Intent getStartServiceIntent(Context context, String startReason, boolean replace_running_vpn) {
         Intent intent = new Intent(context, OpenVPNService.class);
         intent.putExtra(EXTRA_PROFILEUUID, mUuid.toString());
@@ -598,12 +575,8 @@ public class VpnProfile implements Serializable, Cloneable {
         try {
             X509Certificate[] certChain;
             if (mAuthenticationType == TYPE_EXTERNAL_APP) {
-                // FIX: The ExtAuthHelper class was deleted. This feature is no longer supported.
-                // We will throw an exception to fail gracefully if this auth type is ever used.
                 throw new KeyChainException("External App authentication is not supported in this version.");
-
             } else {
-                // This is the standard Android Keystore logic, which we need to keep.
                 if (TextUtils.isEmpty(mAlias))
                     throw new KeyChainException("Certificate alias not specified for KeyStore.");
                 mPrivateKey = KeyChain.getPrivateKey(appContext, mAlias);
@@ -612,7 +585,6 @@ public class VpnProfile implements Serializable, Cloneable {
                 certChain = KeyChain.getCertificateChain(appContext, mAlias);
             }
 
-            // The rest of the method is correct and remains unchanged.
             if (certChain == null || certChain.length == 0)
                 throw new NoCertReturnedException("No certificate chain returned for alias: " + mAlias);
 
@@ -650,7 +622,6 @@ public class VpnProfile implements Serializable, Cloneable {
             return R.string.no_keystore_cert_selected;
         if ((mAuthenticationType == TYPE_CERTIFICATES || mAuthenticationType == TYPE_USERPASS_CERTIFICATES) && TextUtils.isEmpty(mCaFilename) && !mCheckPeerFingerprint)
             return R.string.no_ca_cert_selected;
-        // ... more checks
         return R.string.no_error_found;
     }
 
@@ -719,15 +690,13 @@ public class VpnProfile implements Serializable, Cloneable {
 
     @Nullable
     public String getSignedData(Context c, String b64data, OpenVPNManagement.SignaturePadding padding, String saltlen, String hashalg, boolean needDigest) {
-        // ... (implementation from VpnProfile_B, ensuring mPrivateKey is checked and populated)
-        return null; // Placeholder
+        return null;
     }
 
     private boolean isStaticKey() {
         return mAuthenticationType == TYPE_STATICKEYS;
     }
 
-    // Getters/Setters for new PQC fields
     public String getPqcKEMs() { return mPqcKEMs == null ? "" : mPqcKEMs; }
     public void setPqcKEMs(String pqcKEMs) { this.mPqcKEMs = pqcKEMs; addChangeLogEntry("PQC KEMs changed"); }
     public String getPqcTlsCipher() { return mPqcTlsCipher == null ? "" : mPqcTlsCipher; }
@@ -737,14 +706,7 @@ public class VpnProfile implements Serializable, Cloneable {
         NO_PADDING, PKCS1_PADDING, RSAPSS_PADDING
     }
 
-    /**
-     * Helper method to determine if the profile uses TLS for authentication,
-     * as opposed to a pre-shared static key.
-     *
-     * @return true if the authentication type is not TYPE_STATICKEYS.
-     */
     private boolean useTLSClient() {
-        // A profile is a TLS client if it's not using a static key.
         return mAuthenticationType != TYPE_STATICKEYS;
     }
 
@@ -755,8 +717,182 @@ public class VpnProfile implements Serializable, Cloneable {
     }
 
     public String getUUIDString() {
-        // mUuid is guaranteed non‐null by the constructor
         return mUuid.toString().toLowerCase(Locale.ENGLISH);
+    }
+
+
+    // --- Parcelable Implementation ---
+    @Override
+    public int describeContents() {
+        return 0;
+    }
+
+    @Override
+    public void writeToParcel(Parcel dest, int flags) {
+        dest.writeInt(mVersion);
+        dest.writeString(mServerName);
+        dest.writeString(mServerPort);
+        dest.writeString(mCustomConfig);
+        dest.writeInt(mProfileVersion);
+        dest.writeInt(mAuthenticationType);
+        dest.writeString(mName);
+        dest.writeString(mAlias);
+        dest.writeString(mClientCertFilename);
+        dest.writeString(mTLSAuthDirection);
+        dest.writeString(mTLSAuthFilename);
+        dest.writeString(mClientKeyFilename);
+        dest.writeString(mCaFilename);
+        dest.writeByte((byte) (mUseLzo ? 1 : 0));
+        dest.writeString(mPKCS12Filename);
+        dest.writeString(mPKCS12Password);
+        dest.writeByte((byte) (mUseTLSAuth ? 1 : 0));
+        dest.writeString(mDNS1);
+        dest.writeString(mDNS2);
+        dest.writeString(mIPv4Address);
+        dest.writeString(mIPv6Address);
+        dest.writeByte((byte) (mOverrideDNS ? 1 : 0));
+        dest.writeString(mSearchDomain);
+        dest.writeByte((byte) (mUseDefaultRoute ? 1 : 0));
+        dest.writeByte((byte) (mUsePull ? 1 : 0));
+        dest.writeString(mCustomRoutes);
+        dest.writeByte((byte) (mCheckRemoteCN ? 1 : 0));
+        dest.writeByte((byte) (mExpectTLSCert ? 1 : 0));
+        dest.writeString(mRemoteCN);
+        dest.writeString(mPassword);
+        dest.writeString(mUsername);
+        dest.writeByte((byte) (mRoutenopull ? 1 : 0));
+        dest.writeByte((byte) (mUseRandomHostname ? 1 : 0));
+        dest.writeByte((byte) (mUseFloat ? 1 : 0));
+        dest.writeByte((byte) (mUseCustomConfig ? 1 : 0));
+        dest.writeString(mCustomConfigOptions);
+        dest.writeString(mVerb);
+        dest.writeString(mCipher);
+        dest.writeByte((byte) (mNobind ? 1 : 0));
+        dest.writeByte((byte) (mUseDefaultRoutev6 ? 1 : 0));
+        dest.writeString(mCustomRoutesv6);
+        dest.writeString(mKeyPassword);
+        dest.writeByte((byte) (mPersistTun ? 1 : 0));
+        dest.writeString(mConnectRetryMax);
+        dest.writeString(mConnectRetry);
+        dest.writeString(mConnectRetryMaxTime);
+        dest.writeByte((byte) (mUserEditable ? 1 : 0));
+        dest.writeString(mAuth);
+        dest.writeInt(mX509AuthType);
+        dest.writeString(mx509UsernameField);
+        dest.writeByte((byte) (mAllowLocalLAN ? 1 : 0));
+        dest.writeString(mExcludedRoutes);
+        dest.writeString(mExcludedRoutesv6);
+        dest.writeInt(mMssFix);
+        dest.writeTypedArray(mConnections, flags);
+        dest.writeByte((byte) (mRemoteRandom ? 1 : 0));
+        dest.writeSerializable(mAllowedAppsVpn);
+        dest.writeByte((byte) (mAllowedAppsVpnAreDisallowed ? 1 : 0));
+        dest.writeByte((byte) (mAllowAppVpnBypass ? 1 : 0));
+        dest.writeString(mCrlFilename);
+        dest.writeString(mProfileCreator);
+        dest.writeString(mExternalAuthenticator);
+        dest.writeInt(mAuthRetry);
+        dest.writeInt(mTunMtu);
+        dest.writeByte((byte) (mPushPeerInfo ? 1 : 0));
+        dest.writeLong(mLastUsed);
+        dest.writeString(importedProfileHash);
+        dest.writeByte((byte) (mTemporaryProfile ? 1 : 0));
+        dest.writeString(mDataCiphers);
+        dest.writeByte((byte) (mBlockUnusedAddressFamilies ? 1 : 0));
+        dest.writeByte((byte) (mCheckPeerFingerprint ? 1 : 0));
+        dest.writeString(mPeerFingerPrints);
+        dest.writeInt(mCompatMode);
+        dest.writeByte((byte) (mUseLegacyProvider ? 1 : 0));
+        dest.writeString(mTlSCertProfile);
+        dest.writeLong(mCreationDate);
+        dest.writeString(mPqcKEMs);
+        dest.writeString(mPqcTlsCipher);
+        dest.writeSerializable(mUuid);
+    }
+
+    public static final Creator<VpnProfile> CREATOR = new Creator<VpnProfile>() {
+        @Override
+        public VpnProfile createFromParcel(Parcel in) {
+            return new VpnProfile(in);
+        }
+
+        @Override
+        public VpnProfile[] newArray(int size) {
+            return new VpnProfile[size];
+        }
+    };
+
+    public void addProfileToBuilder(VpnService.Builder builder, Context context) {
+        Log.d("PQC_VPN_Profile", "Configuring VpnService.Builder from profile.");
+
+        // Set the session name for the VPN interface
+        builder.setSession(mName);
+
+        // Set the Maximum Transmission Unit (MTU) if specified
+        if (mTunMtu > 0) {
+            builder.setMtu(mTunMtu);
+            Log.d("PQC_VPN_Profile", "Setting MTU: " + mTunMtu);
+        }
+
+        // Add DNS servers
+        if (mOverrideDNS) {
+            if (!TextUtils.isEmpty(mDNS1)) {
+                try {
+                    builder.addDnsServer(mDNS1);
+                    Log.d("PQC_VPN_Profile", "Adding DNS Server: " + mDNS1);
+                } catch (IllegalArgumentException e) {
+                    VpnStatus.logError(Integer.parseInt("Failed to add DNS server: " + mDNS1), e);
+                }
+            }
+            if (!TextUtils.isEmpty(mDNS2)) {
+                try {
+                    builder.addDnsServer(mDNS2);
+                    Log.d("PQC_VPN_Profile", "Adding DNS Server: " + mDNS2);
+                } catch (IllegalArgumentException e) {
+                    VpnStatus.logError(Integer.parseInt("Failed to add DNS server: " + mDNS2), e);
+                }
+            }
+            if (!TextUtils.isEmpty(mSearchDomain)) {
+                builder.addSearchDomain(mSearchDomain);
+                Log.d("PQC_VPN_Profile", "Adding DNS Search Domain: " + mSearchDomain);
+            }
+        }
+
+        // Configure IPv4 address and routes
+        if (!TextUtils.isEmpty(mIPv4Address)) {
+            try {
+                String[] parts = mIPv4Address.split("/");
+                if (parts.length == 2) {
+                    builder.addAddress(parts[0], Integer.parseInt(parts[1]));
+                    Log.d("PQC_VPN_Profile", "Setting IPv4 Address: " + mIPv4Address);
+                }
+            } catch (Exception e) {
+                VpnStatus.logError(Integer.parseInt("Failed to set IPv4 address: " + mIPv4Address), e);
+            }
+        }
+
+        if (mUseDefaultRoute) {
+            builder.addRoute("0.0.0.0", 0);
+            Log.d("PQC_VPN_Profile", "Adding default IPv4 route.");
+        }
+
+        // Configure IPv6 address and routes
+        if (!TextUtils.isEmpty(mIPv6Address)) {
+            try {
+                String[] parts = mIPv6Address.split("/");
+                if (parts.length == 2) {
+                    builder.addAddress(parts[0], Integer.parseInt(parts[1]));
+                    Log.d("PQC_VPN_Profile", "Setting IPv6 Address: " + mIPv6Address);
+                }
+            } catch (Exception e) {
+                VpnStatus.logError(Integer.parseInt("Failed to set IPv6 address: " + mIPv6Address), e);
+            }
+        }
+
+        if (mUseDefaultRoutev6) {
+            builder.addRoute("::", 0);
+            Log.d("PQC_VPN_Profile", "Adding default IPv6 route.");
+        }
     }
 
 }

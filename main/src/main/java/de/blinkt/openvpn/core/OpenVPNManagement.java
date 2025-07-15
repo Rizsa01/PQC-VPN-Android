@@ -6,46 +6,38 @@
 package de.blinkt.openvpn.core;
 
 public interface OpenVPNManagement {
+
+    // This interface defines a callback for checking pause state.
     interface PausedStateCallback {
         boolean shouldBeRunning();
     }
 
+    // Enum for defining the reason for a pause.
     enum pauseReason {
         noNetwork,
         userPause,
         screenOff,
     }
 
+    // Enum for signature padding types (used in other parts of the app).
     enum SignaturePadding {
         RSA_PKCS1_PSS_PADDING,
         RSA_PKCS1_PADDING,
         NO_PADDING
     }
 
-    int mBytecountInterval = 2;
-
+    // --- Methods already in your interface ---
     void reconnect();
-
     void pause(pauseReason reason);
-
     void resume();
-
-    /**
-     * @param replaceConnection True if the VPN is connected by a new connection.
-     * @return true if there was a process that has been send a stop signal
-     */
     boolean stopVPN(boolean replaceConnection);
-
-    /*
-     * Rebind the interface
-     */
     void networkChange(boolean sameNetwork);
-
     void setPauseCallback(PausedStateCallback callback);
-
-    /**
-     * Send the response to a challenge response
-     * @param response  Base64 encoded response
-     */
     void sendCRResponse(String response);
+
+    //==================================================================
+    // ### THE DEFINITIVE FIX: ADD THE MISSING METHOD DEFINITION ###
+    // This makes the method available on the interface, so other classes can call it.
+    void signalusr1();
+    //==================================================================
 }
