@@ -30,7 +30,7 @@ public class OpenVPNService extends VpnService implements VpnStatus.StateListene
     public static final String DISCONNECT_VPN = "de.blinkt.openvpn.DISCONNECT_VPN";
     public static final String NOTIFICATION_CHANNEL_ID = "openvpn_status";
     private static final String PQC_VPN_LOG_TAG = "PQC_VPN_Service";
-    private static final String OPENVPN_EXECUTABLE_NAME = "libopenvpn.so";
+    private static final String OPENVPN_EXECUTABLE_NAME = "openvpn";
     public static final String EXTRA_VPN_PROFILE_OBJECT = "de.blinkt.openvpn.VPN_PROFILE_OBJECT";
 
     private Handler mCommandHandler;
