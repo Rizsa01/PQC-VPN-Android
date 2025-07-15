@@ -2,6 +2,8 @@
 import com.android.build.gradle.internal.dsl.BaseAppModuleExtension
 import org.gradle.api.tasks.Exec
 import org.gradle.internal.os.OperatingSystem
+import java.util.Properties
+
 
 // This PQC task setup is correct.
 tasks.register<Exec>("installPqcAndroid") {
@@ -115,10 +117,39 @@ configure<BaseAppModuleExtension> {
 }
 
 // SWIG TASK REGISTRATION (Helper Function)
-var swigcmd = "swig"
-if (file("/opt/homebrew/bin/swig").exists()) swigcmd = "/opt/homebrew/bin/swig"
-else if (file("/usr/local/bin/swig").exists()) swigcmd = "/usr/local/bin/swig"
 
+// 1. Load local.properties to get machine-specific paths
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    // Use a reader to handle the input stream properly
+    localPropertiesFile.reader().use { reader ->
+        localProperties.load(reader)
+    }
+}
+
+// 2. Define the SWIG command with OS-specific logic
+val swigcmd: String = when {
+    // Priority 1: Use swig.dir from local.properties if on Windows
+    OperatingSystem.current().isWindows -> {
+        val swigDir = localProperties.getProperty("swig.dir")
+        if (!swigDir.isNullOrBlank()) {
+            // FIX: Create the path from a single string to avoid ambiguity.
+            // This creates a path like "C:/swigwin-4.3.1/swig.exe"
+            File("$swigDir/swig.exe").absolutePath
+        } else {
+            // Fallback if property is not set, will likely fail but informs the user.
+            println("Warning: 'swig.dir' not set in local.properties for Windows build.")
+            "swig"
+        }
+    }
+    // Priority 2: Check for Homebrew on macOS
+    file("/opt/homebrew/bin/swig").exists() -> "/opt/homebrew/bin/swig"
+    // Priority 3: Check standard Unix path
+    file("/usr/local/bin/swig").exists() -> "/usr/local/bin/swig"
+    // Default: Rely on system PATH as a last resort
+    else -> "swig"
+}
 fun registerGenTask(variantName: String, variantDirName: String): File {
     val baseDir = File(buildDir, "generated/source/ovpn3swig/${variantDirName}")
     val genDir = File(baseDir, "net/openvpn/ovpn3")
