@@ -482,6 +482,7 @@ public class VpnProfile implements Serializable, Cloneable, Parcelable {
             // Now, dynamically add the other required directives
             if (!TextUtils.isEmpty(mPqcKEMs)) {
                 Log.d("PQC_VPN_Profile", "Dynamically adding PQC KEMs: " + mPqcKEMs);
+                // THIS IS THE ONLY LINE THAT NEEDS TO BE CHANGED
                 pw.printf("tls-groups %s\n", mPqcKEMs);
             }
 

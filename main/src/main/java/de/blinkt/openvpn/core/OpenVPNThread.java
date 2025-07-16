@@ -51,12 +51,10 @@ public class OpenVPNThread implements Runnable {
         Collections.addAll(argvlist, mArgv);
 
         ProcessBuilder pb = new ProcessBuilder(argvlist);
-        pb.directory(new File(mTmpDir));
+        pb.directory(new File(mNativeDir));
 
         Map<String, String> env = pb.environment();
         env.put("LD_LIBRARY_PATH", mNativeDir);
-        env.put("OPENSSL_CONF", mNativeDir);
-        env.put("OPENSSL_MODULES", mNativeDir + "/ossl-modules");
         env.put("TMPDIR", mTmpDir);
 
         // ### THIS IS THE KEY ###
