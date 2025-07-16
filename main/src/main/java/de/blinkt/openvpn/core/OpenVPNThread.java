@@ -21,6 +21,8 @@ public class OpenVPNThread implements Runnable {
     private final String mTmpDir;
     private final OpenVPNService mService;
 
+
+
     public OpenVPNThread(OpenVPNService service, String[] argv, String nativelibdir, String tmpdir) {
         this.mService = service;
         this.mArgv = argv;
@@ -53,7 +55,7 @@ public class OpenVPNThread implements Runnable {
 
         Map<String, String> env = pb.environment();
         env.put("LD_LIBRARY_PATH", mNativeDir);
-        env.put("OPENSSL_CONF", mNativeDir + "/openssl.cnf");
+        env.put("OPENSSL_CONF", mNativeDir);
         env.put("OPENSSL_MODULES", mNativeDir + "/ossl-modules");
         env.put("TMPDIR", mTmpDir);
 

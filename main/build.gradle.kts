@@ -117,6 +117,7 @@ configure<BaseAppModuleExtension> {
         resources.excludes += setOf("META-INF/**")
     }
 
+
     applicationVariants.all {
         val variant = this
         val sourceDir = registerGenTask(variant.name, variant.baseName.replace("-", "/"))
