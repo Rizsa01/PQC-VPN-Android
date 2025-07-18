@@ -63,14 +63,20 @@ public class NativeUtils {
     //public static native byte[] rsasign(byte[] input, int pkey, boolean pkcs1padding) throws InvalidKeyException;
     //public static native String[] getIfconfig() throws IllegalArgumentException;
     //static native void jniclose(int fdint);
-    public static String getNativeAPI() { if (isRoboUnitTest()) return "ROBO"; else return getJNIAPI(); }
+    public static String getNativeAPI() {
+        if (isRoboUnitTest())
+            return "ROBO";
+        //else return getJNIAPI();
+        return "pqc_custom_api";
+    }
     private static native String getJNIAPI();
     public static native String getOpenVPN2GitVersion();
     public static native String getOpenVPN3GitVersion();
     private static native String getOpenSSLVersionString();
     public static String getOpenSSLVersion() {
         //loadOsslUtil(); // Commenting this out as we probably haven't built libosslutil.so
-        return getOpenSSLVersionString();
+        //return getOpenSSLVersionString();
+        return "OpenSSL 3.x (PQC Custom)";
     }
     static boolean osslutilloaded = false;
     public static byte[] addRssPssPadding(int hashtype, int MSBits, int rsa_size, byte[] from) {

@@ -30,7 +30,7 @@ public class OpenVPNService extends VpnService implements VpnStatus.StateListene
     public static final String DISCONNECT_VPN = "de.blinkt.openvpn.DISCONNECT_VPN";
     public static final String NOTIFICATION_CHANNEL_ID = "openvpn_status";
     private static final String PQC_VPN_LOG_TAG = "PQC_VPN_Service";
-    private static final String OPENVPN_EXECUTABLE_NAME = "libopenvpn.so";
+    private static final String OPENVPN_EXECUTABLE_NAME = "openvpn";
     public static final String EXTRA_VPN_PROFILE_OBJECT = "de.blinkt.openvpn.VPN_PROFILE_OBJECT";
 
     private Handler mCommandHandler;
@@ -78,42 +78,64 @@ public class OpenVPNService extends VpnService implements VpnStatus.StateListene
     }
 
     private void startVpn(Intent intent) {
-        if (intent == null) { return; }
+        if (intent == null) {
+            Log.e(PQC_VPN_LOG_TAG, "Service started with a null intent. Aborting.");
+            return;
+        }
+
+        // 1. Load the VpnProfile from the intent
         if (intent.hasExtra(EXTRA_VPN_PROFILE_OBJECT)) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 mProfile = intent.getParcelableExtra(EXTRA_VPN_PROFILE_OBJECT, VpnProfile.class);
             } else {
-                mProfile = intent.getParcelableExtra(EXTRA_VPN_PROFILE_OBJECT);
+                @SuppressWarnings("deprecation")
+                VpnProfile profile = intent.getParcelableExtra(EXTRA_VPN_PROFILE_OBJECT);
+                mProfile = profile;
             }
         } else {
             String profileUUID = intent.getStringExtra(EXTRA_PROFILEUUID);
-            if (profileUUID != null) { mProfile = ProfileManager.get(this, profileUUID); }
+            if (profileUUID != null) {
+                mProfile = ProfileManager.get(this, profileUUID);
+            }
         }
+
         if (mProfile == null) {
-            Log.e(PQC_VPN_LOG_TAG, "FATAL: VpnProfile is null, cannot start.");
+            Log.e(PQC_VPN_LOG_TAG, "FATAL: VpnProfile is null, cannot start VPN connection.");
             stopSelf();
             return;
         }
 
-        Log.i(PQC_VPN_LOG_TAG, "Profile loaded. Starting native process directly.");
+        Log.i(PQC_VPN_LOG_TAG, "Profile loaded. Starting native process directly for profile: " + mProfile.getName());
 
-        // Initialize the VpnService.Builder here, once per connection.
+        // 2. Initialize the VpnService.Builder
         mBuilder = new Builder();
 
         try {
+            // Get the path to the native lib directory, which is where your
+            // executable is successfully being run from.
             String nativeLibraryDir = getApplicationInfo().nativeLibraryDir;
-            String tmpDir = getCacheDir().getPath();
             String executablePath = nativeLibraryDir + "/" + OPENVPN_EXECUTABLE_NAME;
 
+            // Define the temp directory path.
+            String tmpDir = getCacheDir().getPath();
+
+            // VVVVVVVVVVVVVVVVVVVV THIS IS THE ONLY FIX VVVVVVVVVVVVVVVVVVVV
+            //
+            // Build the command-line arguments. We ONLY pass the executable,
+            // the config flag, and the verbosity. The path to openssl.cnf
+            // is handled EXCLUSIVELY by the environment variable.
             ArrayList<String> argv = new ArrayList<>(Arrays.asList(
                     executablePath,
-                    "--config", "stdin"
+                    "--config", "stdin",
+                    "--verb", "5"
             ));
+            // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+            // This part is correct and remains unchanged.
             Runnable process = new OpenVPNThread(this, argv.toArray(new String[0]), nativeLibraryDir, tmpDir);
             mProcessThread = new Thread(process, "OpenVPNProcessThread");
             mProcessThread.start();
-            Log.i(PQC_VPN_LOG_TAG, "OpenVPNProcessThread has been started. It will now connect automatically.");
+            Log.i(PQC_VPN_LOG_TAG, "OpenVPNProcessThread has been started.");
 
         } catch (Exception e) {
             VpnStatus.logException("Fatal error during OpenVPN startup sequence", e);

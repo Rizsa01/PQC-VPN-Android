@@ -481,11 +481,9 @@ public class VpnProfile implements Serializable, Cloneable, Parcelable {
 
             // Now, dynamically add the other required directives
             if (!TextUtils.isEmpty(mPqcKEMs)) {
-                Log.d("PQC_VPN_Profile", "Dynamically adding PQC KEMs: " + mPqcKEMs);
-                // THIS IS THE ONLY LINE THAT NEEDS TO BE CHANGED
+                Log.d(PQC_VPN_LOG_TAG_PROFILE, "Dynamically adding PQC KEMs with --tls-groups: " + mPqcKEMs);
                 pw.printf("tls-groups %s\n", mPqcKEMs);
             }
-
             // Add the inline certificates and keys
             Log.d("PQC_VPN_Profile", "Adding inline CA certificate.");
             pw.write(insertFileData("ca", mCaFilename));

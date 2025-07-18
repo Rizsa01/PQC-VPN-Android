@@ -135,8 +135,11 @@ class PqcVpnActivity : AppCompatActivity(), VpnStatus.StateListener {
 
     override fun setConnectedVPN(uuid: String?) {}
     override fun updateState(state: String, log: String, resId: Int, level: ConnectionStatus, intent: Intent?) {
-        updateStatus("${level.name}\n${VpnStatus.getLastCleanLogMessage(this)}")
+        runOnUiThread {
+            updateStatus("${level.name}\n${VpnStatus.getLastCleanLogMessage(this)}")
+        }
     }
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

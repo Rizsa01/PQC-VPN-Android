@@ -1,0 +1,198 @@
+.class public Landroid/support/customtabs/ICustomTabsCallback$Default;
+.super Ljava/lang/Object;
+.source "ICustomTabsCallback.java"
+
+# interfaces
+.implements Landroid/support/customtabs/ICustomTabsCallback;
+
+
+# annotations
+.annotation system Ldalvik/annotation/EnclosingClass;
+    value = Landroid/support/customtabs/ICustomTabsCallback;
+.end annotation
+
+.annotation system Ldalvik/annotation/InnerClass;
+    accessFlags = 0x9
+    name = "Default"
+.end annotation
+
+
+# direct methods
+.method public constructor <init>()V
+    .locals 0
+
+    .line 11
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+
+    return-void
+.end method
+
+
+# virtual methods
+.method public asBinder()Landroid/os/IBinder;
+    .locals 1
+
+    .line 51
+    const/4 v0, 0x0
+
+    return-object v0
+.end method
+
+.method public extraCallback(Ljava/lang/String;Landroid/os/Bundle;)V
+    .locals 0
+    .param p1, "callbackName"    # Ljava/lang/String;
+    .param p2, "args"    # Landroid/os/Bundle;
+    .annotation system Ldalvik/annotation/Throws;
+        value = {
+            Landroid/os/RemoteException;
+        }
+    .end annotation
+
+    .line 18
+    return-void
+.end method
+
+.method public extraCallbackWithResult(Ljava/lang/String;Landroid/os/Bundle;)Landroid/os/Bundle;
+    .locals 1
+    .param p1, "callbackName"    # Ljava/lang/String;
+    .param p2, "args"    # Landroid/os/Bundle;
+    .annotation system Ldalvik/annotation/Throws;
+        value = {
+            Landroid/os/RemoteException;
+        }
+    .end annotation
+
+    .line 32
+    const/4 v0, 0x0
+
+    return-object v0
+.end method
+
+.method public onActivityLayout(IIIIILandroid/os/Bundle;)V
+    .locals 0
+    .param p1, "left"    # I
+    .param p2, "top"    # I
+    .param p3, "right"    # I
+    .param p4, "bottom"    # I
+    .param p5, "state"    # I
+    .param p6, "extras"    # Landroid/os/Bundle;
+    .annotation system Ldalvik/annotation/Throws;
+        value = {
+            Landroid/os/RemoteException;
+        }
+    .end annotation
+
+    .line 42
+    return-void
+.end method
+
+.method public onActivityResized(IILandroid/os/Bundle;)V
+    .locals 0
+    .param p1, "height"    # I
+    .param p2, "width"    # I
+    .param p3, "extras"    # Landroid/os/Bundle;
+    .annotation system Ldalvik/annotation/Throws;
+        value = {
+            Landroid/os/RemoteException;
+        }
+    .end annotation
+
+    .line 36
+    return-void
+.end method
+
+.method public onMessageChannelReady(Landroid/os/Bundle;)V
+    .locals 0
+    .param p1, "extras"    # Landroid/os/Bundle;
+    .annotation system Ldalvik/annotation/Throws;
+        value = {
+            Landroid/os/RemoteException;
+        }
+    .end annotation
+
+    .line 22
+    return-void
+.end method
+
+.method public onMinimized(Landroid/os/Bundle;)V
+    .locals 0
+    .param p1, "extras"    # Landroid/os/Bundle;
+    .annotation system Ldalvik/annotation/Throws;
+        value = {
+            Landroid/os/RemoteException;
+        }
+    .end annotation
+
+    .line 45
+    return-void
+.end method
+
+.method public onNavigationEvent(ILandroid/os/Bundle;)V
+    .locals 0
+    .param p1, "navigationEvent"    # I
+    .param p2, "extras"    # Landroid/os/Bundle;
+    .annotation system Ldalvik/annotation/Throws;
+        value = {
+            Landroid/os/RemoteException;
+        }
+    .end annotation
+
+    .line 15
+    return-void
+.end method
+
+.method public onPostMessage(Ljava/lang/String;Landroid/os/Bundle;)V
+    .locals 0
+    .param p1, "message"    # Ljava/lang/String;
+    .param p2, "extras"    # Landroid/os/Bundle;
+    .annotation system Ldalvik/annotation/Throws;
+        value = {
+            Landroid/os/RemoteException;
+        }
+    .end annotation
+
+    .line 25
+    return-void
+.end method
+
+.method public onRelationshipValidationResult(ILandroid/net/Uri;ZLandroid/os/Bundle;)V
+    .locals 0
+    .param p1, "relation"    # I
+    .param p2, "origin"    # Landroid/net/Uri;
+    .param p3, "result"    # Z
+    .param p4, "extras"    # Landroid/os/Bundle;
+    .annotation system Ldalvik/annotation/Throws;
+        value = {
+            Landroid/os/RemoteException;
+        }
+    .end annotation
+
+    .line 28
+    return-void
+.end method
+
+.method public onUnminimized(Landroid/os/Bundle;)V
+    .locals 0
+    .param p1, "extras"    # Landroid/os/Bundle;
+    .annotation system Ldalvik/annotation/Throws;
+        value = {
+            Landroid/os/RemoteException;
+        }
+    .end annotation
+
+    .line 48
+    return-void
+.end method
+
+.method public onWarmupCompleted(Landroid/os/Bundle;)V
+    .locals 0
+    .param p1, "extras"    # Landroid/os/Bundle;
+    .annotation system Ldalvik/annotation/Throws;
+        value = {
+            Landroid/os/RemoteException;
+        }
+    .end annotation
+
+    .line 39
+    return-void
+.end method

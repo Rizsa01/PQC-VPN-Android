@@ -114,7 +114,15 @@ configure<BaseAppModuleExtension> {
     }
 
     packaging {
-        resources.excludes += setOf("META-INF/**")
+        resources.excludes += "META-INF/**"
+
+        // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+        // This sub-block is for options specific to JNI libraries,
+        // like keeping debug symbols.
+        jniLibs {
+            keepDebugSymbols.add("**/*.so")
+        }
     }
 
 

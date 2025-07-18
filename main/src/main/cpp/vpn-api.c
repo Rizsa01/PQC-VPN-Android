@@ -32,42 +32,36 @@ Java_de_blinkt_openvpn_core_VPNThread_run(JNIEnv *env, jclass clazz, jobjectArra
     argv_c[argc] = NULL;
 
     // ##################################################################
-    // ### BEGIN PQC FIX: SET OPENSSL ENVIRONMENT VARIABLES           ###
+    // ### BEGIN DEFINITIVE FIX: SET OPENSSL ENVIRONMENT VARIABLES    ###
     // ##################################################################
 
-    // Get the absolute path to our native libraries directory
+    // Get the absolute path to our native libraries directory, passed from Java
     const char* native_dir = ovpn_get_native_lib_path();
 
-    // Define buffers for our new environment variable paths
-    char ssl_conf_path[1024];
-    char ssl_modules_path[1024];
+    // Set the environment variable for OpenSSL to find our PQC provider.
+    // The '1' means to overwrite the variable if it already exists.
+    // The embedded openssl.cnf tells OpenSSL to load "oqsprovider.so", and
+    // this variable tells it WHERE to look for that file.
+    if (native_dir != NULL && strlen(native_dir) > 0) {
+        setenv("OPENSSL_MODULES", native_dir, 1);
 
-    // Construct the full, absolute path to openssl.cnf
-    snprintf(ssl_conf_path, sizeof(ssl_conf_path), "%s/openssl.cnf", native_dir);
-
-    // Construct the full, absolute path to the directory containing our provider
-    snprintf(ssl_modules_path, sizeof(ssl_modules_path), "%s/ossl-modules", native_dir);
-
-    // Set the environment variables. The '1' means to overwrite them if they already exist.
-    setenv("OPENSSL_CONF", ssl_conf_path, 1);
-    setenv("OPENSSL_MODULES", ssl_modules_path, 1);
-
-    // Log the paths to confirm they are correct. You can view these in Logcat.
-    __android_log_print(ANDROID_LOG_INFO, PQC_LOG_TAG, "Set OPENSSL_CONF=%s", ssl_conf_path);
-    __android_log_print(ANDROID_LOG_INFO, PQC_LOG_TAG, "Set OPENSSL_MODULES=%s", ssl_modules_path);
+        // Log the path to confirm it is correct. You can view this in Logcat.
+        __android_log_print(ANDROID_LOG_INFO, PQC_LOG_TAG, "Set OPENSSL_MODULES=%s", native_dir);
+    } else {
+        __android_log_print(ANDROID_LOG_ERROR, PQC_LOG_TAG, "Native library path is NULL or empty, cannot set OPENSSL_MODULES.");
+    }
 
     // ##################################################################
-    // ### END PQC FIX                                                ###
+    // ### END DEFINITIVE FIX                                         ###
     // ##################################################################
 
 
-    // Construct the full path to our executable.
-    char executable_path[1024];
-    snprintf(executable_path, sizeof(executable_path), "%s/openvpn", native_dir);
+    // This part is already correct in your file, it constructs the full path
+    // to the executable using the first argument passed from Java.
+    const char* executable_path = argv_c[0];
 
     // Log the command we are about to execute
     __android_log_print(ANDROID_LOG_INFO, PQC_LOG_TAG, "Executing: %s", executable_path);
-
 
     // Replace this JNI process with the openvpn executable.
     // It will now inherit the correct environment variables.

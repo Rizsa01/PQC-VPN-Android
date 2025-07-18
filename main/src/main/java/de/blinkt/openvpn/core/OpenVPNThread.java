@@ -23,6 +23,7 @@ public class OpenVPNThread implements Runnable {
 
 
 
+
     public OpenVPNThread(OpenVPNService service, String[] argv, String nativelibdir, String tmpdir) {
         this.mService = service;
         this.mArgv = argv;
@@ -51,25 +52,28 @@ public class OpenVPNThread implements Runnable {
         Collections.addAll(argvlist, mArgv);
 
         ProcessBuilder pb = new ProcessBuilder(argvlist);
-        pb.directory(new File(mNativeDir));
 
+        // THIS IS THE MOST IMPORTANT PART
         Map<String, String> env = pb.environment();
-        env.put("LD_LIBRARY_PATH", mNativeDir);
-        env.put("TMPDIR", mTmpDir);
 
-        // ### THIS IS THE KEY ###
-        // We will redirect the process's error stream to its output stream.
-        // This means any errors (like "provider failed to load") will be captured
-        // by the same reader that is listening for normal status messages.
+        // This tells the executable where to find liboqs.so, libpqccrypto.so, etc.
+        env.put("LD_LIBRARY_PATH", mNativeDir);
+
+        // This tells OpenSSL where to find the config file that loads the PQC provider.
+        //String openSslConfigPath = new File(mService.getCacheDir(), "openssl.cnf").getAbsolutePath();
+        //env.put("OPENSSL_CONF", openSslConfigPath);
+        env.put("OPENSSL_MODULES", mNativeDir);
+        env.put("TMPDIR", mTmpDir);
         pb.redirectErrorStream(true);
 
         Log.i(TAG, "Starting process with command: " + argvlist);
-        Log.i(TAG, "Working directory: " + mTmpDir);
+        Log.i(TAG, "Setting LD_LIBRARY_PATH=" + mNativeDir);
+        //Log.i(TAG, "Setting OPENSSL_CONF=" + openSslConfigPath);
 
         try {
             mProcess = pb.start();
 
-            // Start a thread to write the config to stdin
+            // This part for writing the config to stdin is correct and remains.
             final OutputStream stdin = mProcess.getOutputStream();
             new Thread(() -> {
                 try {
@@ -81,21 +85,17 @@ public class OpenVPNThread implements Runnable {
                 }
             }, "OpenVPNConfigWriter").start();
 
-
-            // Read combined stdout and stderr and log everything
+            // This part for reading logs is correct and remains.
             try (InputStream in = mProcess.getInputStream();
                  BufferedReader br = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
-
                 String line;
                 while ((line = br.readLine()) != null) {
-                    // We will now see EVERY line of output from the native process,
-                    // including startup errors.
-                    Log.e(TAG, "NATIVE_LOG: " + line);
+                    Log.i(TAG, "NATIVE_LOG: " + line); // Use INFO level to distinguish from errors
                     VpnStatus.logInfo("P: " + line);
                 }
             }
 
-            // Wait for the process to exit and log its code.
+            // This part for waiting for exit is correct and remains.
             int exitValue = mProcess.waitFor();
             Log.e(TAG, "Native process exited with value: " + exitValue);
 

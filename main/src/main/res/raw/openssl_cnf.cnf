@@ -61,7 +61,7 @@ ssl_conf = ssl_sect
 system_default = system_default_sect
 
 [system_default_sect]
-Groups = mlkem512:p256_mlkem512
+#Groups = p256_mlkem512
 
 
 # List of providers to load
