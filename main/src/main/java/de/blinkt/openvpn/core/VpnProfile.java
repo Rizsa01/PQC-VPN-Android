@@ -472,34 +472,23 @@ public class VpnProfile implements Serializable, Cloneable, Parcelable {
     public void writeConfigFileOutput(Context context, OutputStream out) throws IOException {
         PrintWriter pw = new PrintWriter(new OutputStreamWriter(out, StandardCharsets.UTF_8));
 
-        if (mUseCustomConfig) {
-            Log.d("PQC_VPN_Profile", "Writing custom config from mCustomConfigOptions to process stdin.");
+        // Log what we are about to write
+        PqcVpnLog.i("--- BEGIN OpenVPN Config ---");
+        PqcVpnLog.i(mCustomConfigOptions);
+        PqcVpnLog.i("<ca>...</ca>");
+        PqcVpnLog.i("<cert>...</cert>");
+        PqcVpnLog.i("<key>...</key>");
+        PqcVpnLog.i("--- END OpenVPN Config ---");
 
-            // Write the clean base config first
-            pw.write(mCustomConfigOptions);
-            pw.write("\n"); // Ensure there's a newline
-
-            // Now, dynamically add the other required directives
-            if (!TextUtils.isEmpty(mPqcKEMs)) {
-                Log.d(PQC_VPN_LOG_TAG_PROFILE, "Dynamically adding PQC KEMs with --tls-groups: " + mPqcKEMs);
-                pw.printf("tls-groups %s\n", mPqcKEMs);
-            }
-            // Add the inline certificates and keys
-            Log.d("PQC_VPN_Profile", "Adding inline CA certificate.");
-            pw.write(insertFileData("ca", mCaFilename));
-
-            Log.d("PQC_VPN_Profile", "Adding inline client certificate.");
-            pw.write(insertFileData("cert", mClientCertFilename));
-
-            Log.d("PQC_VPN_Profile", "Adding inline client key.");
-            pw.write(insertFileData("key", mClientKeyFilename));
-
-        } else {
-            Log.e("PQC_VPN_Profile", "Programmatic config generation not supported. mUseCustomConfig must be true.");
-            pw.write("# Programmatic config generation not supported in this mode.\n");
+        // Write the components exactly as parsed from the .ovpn file
+        if (!TextUtils.isEmpty(mCustomConfigOptions)) {
+            pw.println(mCustomConfigOptions);
         }
+        pw.write(insertFileData("ca", mCaFilename));
+        pw.write(insertFileData("cert", mClientCertFilename));
+        pw.write(insertFileData("key", mClientKeyFilename));
+
         pw.flush();
-        Log.d("PQC_VPN_Profile", "Finished writing config to stdin.");
     }
 
     public String getPlatformVersionEnvString() {

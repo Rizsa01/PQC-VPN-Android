@@ -1,158 +1,149 @@
 package de.blinkt.openvpn.activities
 
 import android.app.Activity
-import android.content.*
-import android.net.Uri
+import android.content.ComponentName
+import android.content.Intent
+import android.content.ServiceConnection
 import android.net.VpnService
 import android.os.Bundle
 import android.os.IBinder
 import android.os.Parcelable
-import android.util.Log
-import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import androidx.documentfile.provider.DocumentFile
-import androidx.lifecycle.lifecycleScope
-import de.blinkt.openvpn.core.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.BufferedReader
-import java.io.IOException
-import java.io.InputStreamReader
+import de.blinkt.openvpn.core.ConnectionStatus
+import de.blinkt.openvpn.core.OpenVPNService
+import de.blinkt.openvpn.core.OvpnProfileParser
+import de.blinkt.openvpn.core.ProfileManager
+import de.blinkt.openvpn.core.VpnProfile
+import de.blinkt.openvpn.core.VpnStatus
 import de.blinkt.openvpn.databinding.ActivityPqcVpnBinding
+import de.blinkt.openvpn.core.*
 
 class PqcVpnActivity : AppCompatActivity(), VpnStatus.StateListener {
 
     private lateinit var binding: ActivityPqcVpnBinding
-    private val clientCertFolders = mutableListOf<String>()
-    private lateinit var spinnerAdapter: ArrayAdapter<String>
-    private var certsFolderUri: Uri? = null
-
-    companion object { private const val TAG = "PQC_VPN_DEBUG_LOG" }
+    private var currentProfile: VpnProfile? = null
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, service: IBinder) {}
         override fun onServiceDisconnected(name: ComponentName) {}
     }
 
-    override fun onStart() {
-        super.onStart()
-        val intent = Intent(this, OpenVPNService::class.java).setAction(OpenVPNService.START_SERVICE)
-        bindService(intent, serviceConnection, BIND_AUTO_CREATE)
-        VpnStatus.addStateListener(this)
-    }
-
-    override fun onStop() {
-        super.onStop()
-        unbindService(serviceConnection)
-        VpnStatus.removeStateListener(this)
-    }
-
-    private val openDirectoryLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+    private val openFileLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        PqcVpnLog.i("ActivityResult: Received result from file picker.")
         if (result.resultCode == Activity.RESULT_OK) {
             result.data?.data?.also { uri ->
-                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                certsFolderUri = uri
-                findClientFolders()
+                PqcVpnLog.i("File URI selected: $uri")
+                val profile = OvpnProfileParser.parse(this, uri)
+                if (profile == null) {
+                    PqcVpnLog.e("Profile parsing FAILED.")
+                    Toast.makeText(this, "Failed to parse profile.", Toast.LENGTH_LONG).show()
+                    updateStatus("Error: Could not parse .ovpn file.")
+                } else {
+                    currentProfile = profile
+                    PqcVpnLog.i("Profile parsing SUCCESS. Profile name: '${profile.name}'")
+                    updateStatus("Imported '${profile.name}'.\nReady to connect.")
+                    binding.buttonConnect.isEnabled = true
+                }
             }
-        }
-    }
-
-    private fun findClientFolders() {
-        val parentUri = certsFolderUri ?: return
-        lifecycleScope.launch(Dispatchers.IO) {
-            val parent = DocumentFile.fromTreeUri(this@PqcVpnActivity, parentUri) ?: return@launch
-            val found = parent.listFiles().filter {
-                it.isDirectory &&
-                        it.findFile("android_client.config")?.exists() == true &&
-                        it.findFile("client_cert.crt")?.exists() == true &&
-                        it.findFile("client_key.key")?.exists() == true
-            }.mapNotNull { it.name }
-            withContext(Dispatchers.Main) {
-                clientCertFolders.clear(); clientCertFolders.addAll(found)
-                spinnerAdapter.notifyDataSetChanged()
-                updateStatus("Found ${found.size} folder(s). Ready to connect.")
-            }
+        } else {
+            PqcVpnLog.w("ActivityResult: No file selected or operation cancelled.")
+            Toast.makeText(this, "No file selected.", Toast.LENGTH_SHORT).show()
+            updateStatus("No file selected.")
         }
     }
 
     private val vpnPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
-        if (res.resultCode == Activity.RESULT_OK) { actuallyStartVpn() }
-        else { updateStatus("VPN permission was denied.") }
-    }
-
-    private fun requestVpnPermission() {
-        VpnService.prepare(this)?.let { vpnPermissionLauncher.launch(it) } ?: actuallyStartVpn()
-    }
-
-    private fun readTextFromFileInDir(baseDirUri: Uri, subDirName: String, targetFileName: String): String? {
-        val subDir = DocumentFile.fromTreeUri(this, baseDirUri)?.findFile(subDirName)
-        try {
-            subDir?.findFile(targetFileName)?.uri?.let {
-                contentResolver.openInputStream(it)?.use { stream ->
-                    return BufferedReader(InputStreamReader(stream)).readText()
-                }
-            }
-        } catch (e: IOException) { Log.e(TAG, "Read error", e) }
-        return null
-    }
-
-    private fun actuallyStartVpn() {
-        val folderName = binding.spinnerPqcKem.selectedItem as? String ?: return
-        val baseUri = certsFolderUri ?: return
-        lifecycleScope.launch {
-            VpnConfigManager.copyAndGetConfigFile(this@PqcVpnActivity) ?: run {
-                updateStatus("FATAL: Could not create OpenSSL config file.")
-                return@launch
-            }
-            val profile = withContext(Dispatchers.IO) {
-                val customConfig = readTextFromFileInDir(baseUri, folderName, "android_client.config")
-                val caCert = readTextFromFileInDir(baseUri, folderName, "ca_cert.crt")
-                val clientCert = readTextFromFileInDir(baseUri, folderName, "client_cert.crt")
-                val clientKey = readTextFromFileInDir(baseUri, folderName, "client_key.key")
-                if (customConfig == null || caCert == null || clientCert == null || clientKey == null) return@withContext null
-                VpnProfile("PQC-$folderName").apply {
-                    mUseCustomConfig = true; mCustomConfigOptions = customConfig
-                    mCaFilename = VpnProfile.INLINE_TAG + caCert
-                    mClientCertFilename = VpnProfile.INLINE_TAG + clientCert
-                    mClientKeyFilename = VpnProfile.INLINE_TAG + clientKey
-                    mPqcKEMs = "p256_mlkem512"
-                }
-            } ?: run { updateStatus("ERROR: Missing required files!"); return@launch }
-            val pm = ProfileManager.getInstance(this@PqcVpnActivity)
-            pm.addProfile(profile); pm.saveProfileList(this@PqcVpnActivity)
-            val startVpnIntent = Intent(this@PqcVpnActivity, OpenVPNService::class.java).apply {
-                action = OpenVPNService.START_SERVICE
-                putExtra(OpenVPNService.EXTRA_VPN_PROFILE_OBJECT, profile as Parcelable)
-            }
-            ContextCompat.startForegroundService(this@PqcVpnActivity, startVpnIntent)
-            updateStatus("Starting service...")
+        PqcVpnLog.i("ActivityResult: Received result from VPN permission dialog.")
+        if (res.resultCode == Activity.RESULT_OK) {
+            PqcVpnLog.i("VPN permission GRANTED.")
+            startVpn()
+        } else {
+            PqcVpnLog.e("VPN permission DENIED.")
+            updateStatus("VPN permission was denied.")
         }
     }
-
-    override fun setConnectedVPN(uuid: String?) {}
-    override fun updateState(state: String, log: String, resId: Int, level: ConnectionStatus, intent: Intent?) {
-        runOnUiThread {
-            updateStatus("${level.name}\n${VpnStatus.getLastCleanLogMessage(this)}")
-        }
-    }
-
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityPqcVpnBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        spinnerAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, clientCertFolders)
-        spinnerAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        binding.spinnerPqcKem.adapter = spinnerAdapter
-        binding.buttonSelectFolder.setOnClickListener { openDirectoryLauncher.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)) }
-        binding.buttonConnect.setOnClickListener { if (binding.spinnerPqcKem.selectedItem == null) Toast.makeText(this, "Select folder", Toast.LENGTH_SHORT).show() else requestVpnPermission() }
-        binding.buttonDisconnect.setOnClickListener { ProfileManager.setConntectedVpnProfileDisconnected(this) }
-        updateStatus("Ready.")
+        PqcVpnLog.i("PqcVpnActivity: onCreate")
+
+        binding.buttonImportProfile.setOnClickListener {
+            PqcVpnLog.i("User Action: Tapped 'Import Profile' button.")
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "*/*" // Allow selection of any file type
+            }
+            openFileLauncher.launch(intent)
+        }
+
+        binding.buttonConnect.setOnClickListener {
+            PqcVpnLog.i("User Action: Tapped 'Connect' button.")
+            if (currentProfile != null) {
+                requestVpnPermission()
+            } else {
+                PqcVpnLog.w("Connect tapped but no profile is loaded.")
+                Toast.makeText(this, "Please import a profile first.", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        binding.buttonDisconnect.setOnClickListener {
+            ProfileManager.setConntectedVpnProfileDisconnected(this)
+        }
     }
 
-    private fun updateStatus(msg: String) { binding.textStatus.text = msg }
+    private fun requestVpnPermission() {
+        PqcVpnLog.d("Requesting VPN permission...")
+        VpnService.prepare(this)?.let { vpnPermissionLauncher.launch(it) } ?: startVpn()
+    }
+
+    private fun startVpn() {
+        val profile = currentProfile ?: run {
+            PqcVpnLog.e("startVpn() called, but currentProfile is null!")
+            return
+        }
+        PqcVpnLog.i("Executing startVpn() for profile: '${profile.name}'")
+
+        val pm = ProfileManager.getInstance(this)
+        pm.addProfile(profile)
+        pm.saveProfileList(this)
+
+        val startVpnIntent = Intent(this, OpenVPNService::class.java).apply {
+            action = OpenVPNService.START_SERVICE
+            putExtra(OpenVPNService.EXTRA_VPN_PROFILE_OBJECT, profile as Parcelable)
+        }
+        ContextCompat.startForegroundService(this, startVpnIntent)
+        updateStatus("Starting VPN service...")
+        PqcVpnLog.d("Creating service intent: $startVpnIntent")
+        PqcVpnLog.i("startForegroundService() called.")
+        updateStatus("Starting VPN service...")
+    }
+
+    override fun onStart() {
+        super.onStart()
+        VpnStatus.addStateListener(this)
+        bindService(Intent(this, OpenVPNService::class.java), serviceConnection, BIND_AUTO_CREATE)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        VpnStatus.removeStateListener(this)
+        unbindService(serviceConnection)
+    }
+
+    override fun updateState(state: String, log: String, resId: Int, level: ConnectionStatus, intent: Intent?) {
+        runOnUiThread {
+            updateStatus("Status: ${level.name}\n\n${VpnStatus.getLastCleanLogMessage(this)}")
+        }
+    }
+
+    override fun setConnectedVPN(uuid: String?) {}
+
+    private fun updateStatus(msg: String) {
+        binding.textStatus.text = msg
+    }
 }

@@ -30,7 +30,7 @@ public class OpenVPNService extends VpnService implements VpnStatus.StateListene
     public static final String DISCONNECT_VPN = "de.blinkt.openvpn.DISCONNECT_VPN";
     public static final String NOTIFICATION_CHANNEL_ID = "openvpn_status";
     private static final String PQC_VPN_LOG_TAG = "PQC_VPN_Service";
-    private static final String OPENVPN_EXECUTABLE_NAME = "openvpn";
+    static final String OPENVPN_EXECUTABLE = "libopenvpn.so";
     public static final String EXTRA_VPN_PROFILE_OBJECT = "de.blinkt.openvpn.VPN_PROFILE_OBJECT";
 
     private Handler mCommandHandler;
@@ -114,7 +114,7 @@ public class OpenVPNService extends VpnService implements VpnStatus.StateListene
             // Get the path to the native lib directory, which is where your
             // executable is successfully being run from.
             String nativeLibraryDir = getApplicationInfo().nativeLibraryDir;
-            String executablePath = nativeLibraryDir + "/" + OPENVPN_EXECUTABLE_NAME;
+            String executablePath = nativeLibraryDir + "/" + OPENVPN_EXECUTABLE;
 
             // Define the temp directory path.
             String tmpDir = getCacheDir().getPath();
@@ -124,15 +124,15 @@ public class OpenVPNService extends VpnService implements VpnStatus.StateListene
             // Build the command-line arguments. We ONLY pass the executable,
             // the config flag, and the verbosity. The path to openssl.cnf
             // is handled EXCLUSIVELY by the environment variable.
+
             ArrayList<String> argv = new ArrayList<>(Arrays.asList(
-                    executablePath,
-                    "--config", "stdin",
-                    "--verb", "5"
+                    "--config", "stdin"
             ));
             // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
             // This part is correct and remains unchanged.
-            Runnable process = new OpenVPNThread(this, argv.toArray(new String[0]), nativeLibraryDir, tmpDir);
+
+            Runnable process = new OpenVPNThread(this, argv.toArray(new String[0]), tmpDir);
             mProcessThread = new Thread(process, "OpenVPNProcessThread");
             mProcessThread.start();
             Log.i(PQC_VPN_LOG_TAG, "OpenVPNProcessThread has been started.");

@@ -1,5 +1,6 @@
 package de.blinkt.openvpn.core;
 
+import android.text.TextUtils;
 import android.util.Log;
 import java.io.BufferedReader;
 import java.io.File;
@@ -8,26 +9,23 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.LinkedList;
 import java.util.Map;
-import java.util.Collections;
+
 import de.blinkt.openvpn.R;
 
 public class OpenVPNThread implements Runnable {
-    private static final String TAG = "PQC_VPN_Thread";
-    private Process mProcess;
+    // NOTE: This MUST match the name of your executable in jniLibs
+    private static final String OPENVPN_EXECUTABLE_NAME = "libopenvpn.so";
     private final String[] mArgv;
-    private final String mNativeDir;
     private final String mTmpDir;
     private final OpenVPNService mService;
+    private Process mProcess;
 
-
-
-
-    public OpenVPNThread(OpenVPNService service, String[] argv, String nativelibdir, String tmpdir) {
+    public OpenVPNThread(OpenVPNService service, String[] argv, String tmpdir) {
         this.mService = service;
         this.mArgv = argv;
-        this.mNativeDir = nativelibdir;
         this.mTmpDir = tmpdir;
     }
 
@@ -36,10 +34,10 @@ public class OpenVPNThread implements Runnable {
         try {
             startOpenVPN();
         } catch (Exception e) {
-            Log.e(TAG, "!!!!!!!!!! NATIVE PROCESS FAILED TO START !!!!!!!!!!", e);
+            PqcVpnLog.e("!!!!!!!!!! NATIVE PROCESS FAILED TO START !!!!!!!!!!", e);
             VpnStatus.logException("FATAL: OpenVPNThread crashed.", e);
         } finally {
-            Log.i(TAG, "OpenVPN Thread shutting down.");
+            PqcVpnLog.w("OpenVPN Thread is shutting down.");
             if (mProcess != null) {
                 mProcess.destroy();
             }
@@ -48,59 +46,80 @@ public class OpenVPNThread implements Runnable {
     }
 
     private void startOpenVPN() throws IOException {
+        PqcVpnLog.i("OpenVPNThread: startOpenVPN() entered.");
+
+        String nativeLibraryDir = mService.getApplicationInfo().nativeLibraryDir;
+        File openvpnFile = new File(nativeLibraryDir, OPENVPN_EXECUTABLE_NAME);
+        PqcVpnLog.d("Executable path set to: " + openvpnFile.getAbsolutePath());
+
+        if (!openvpnFile.exists()) {
+            PqcVpnLog.e("FATAL: EXECUTABLE DOES NOT EXIST at path. Check jniLibs packaging.", null);
+            return;
+        }
+        PqcVpnLog.i("Executable file exists.");
+
+        // We do not call setExecutable(true). The system installer does this for us.
+        if (!openvpnFile.canExecute()) {
+            PqcVpnLog.e("FATAL: EXECUTABLE IS NOT EXECUTABLE. Check APK packaging, extractNativeLibs=true in manifest.", null);
+            return;
+        }
+        PqcVpnLog.i("Executable has execute permission.");
+
         LinkedList<String> argvlist = new LinkedList<>();
+        argvlist.add(openvpnFile.getAbsolutePath());
         Collections.addAll(argvlist, mArgv);
 
+        PqcVpnLog.i("Final command to be executed: " + TextUtils.join(" ", argvlist));
+
         ProcessBuilder pb = new ProcessBuilder(argvlist);
+        pb.directory(new File(mTmpDir));
+        PqcVpnLog.d("Working directory set to: " + mTmpDir);
 
-        // THIS IS THE MOST IMPORTANT PART
         Map<String, String> env = pb.environment();
-
-        // This tells the executable where to find liboqs.so, libpqccrypto.so, etc.
-        env.put("LD_LIBRARY_PATH", mNativeDir);
-
-        // This tells OpenSSL where to find the config file that loads the PQC provider.
-        //String openSslConfigPath = new File(mService.getCacheDir(), "openssl.cnf").getAbsolutePath();
-        //env.put("OPENSSL_CONF", openSslConfigPath);
-        env.put("OPENSSL_MODULES", mNativeDir);
+        env.put("LD_LIBRARY_PATH", nativeLibraryDir);
+        env.put("OPENSSL_MODULES", nativeLibraryDir);
         env.put("TMPDIR", mTmpDir);
+
+        PqcVpnLog.d("Environment: LD_LIBRARY_PATH=" + env.get("LD_LIBRARY_PATH"));
+        PqcVpnLog.d("Environment: OPENSSL_MODULES=" + env.get("OPENSSL_MODULES"));
+
         pb.redirectErrorStream(true);
 
-        Log.i(TAG, "Starting process with command: " + argvlist);
-        Log.i(TAG, "Setting LD_LIBRARY_PATH=" + mNativeDir);
-        //Log.i(TAG, "Setting OPENSSL_CONF=" + openSslConfigPath);
-
         try {
+            PqcVpnLog.i("Starting native process...");
             mProcess = pb.start();
+            PqcVpnLog.i("Process started successfully.");
 
-            // This part for writing the config to stdin is correct and remains.
             final OutputStream stdin = mProcess.getOutputStream();
             new Thread(() -> {
                 try {
                     mService.writeProfileToStdIn(stdin);
                 } catch (IOException e) {
-                    VpnStatus.logException("Error writing config to stdin", e);
+                    PqcVpnLog.e("Error writing config to stdin", e);
                 } finally {
-                    try { stdin.close(); } catch (IOException e) { /* ignore */ }
+                    try {
+                        stdin.close();
+                    } catch (IOException e) { /* ignore */ }
                 }
             }, "OpenVPNConfigWriter").start();
 
-            // This part for reading logs is correct and remains.
             try (InputStream in = mProcess.getInputStream();
                  BufferedReader br = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+
+                PqcVpnLog.i("Waiting for native log output...");
                 String line;
                 while ((line = br.readLine()) != null) {
-                    Log.i(TAG, "NATIVE_LOG: " + line); // Use INFO level to distinguish from errors
+                    PqcVpnLog.d("NATIVE: " + line);
                     VpnStatus.logInfo("P: " + line);
                 }
             }
 
-            // This part for waiting for exit is correct and remains.
             int exitValue = mProcess.waitFor();
-            Log.e(TAG, "Native process exited with value: " + exitValue);
+            PqcVpnLog.e("Native process exited with value: " + exitValue, null);
 
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            PqcVpnLog.e("An exception occurred while starting or monitoring the process.", e);
+            VpnStatus.logException("FATAL: OpenVPNThread crashed.", e);
         }
     }
 
