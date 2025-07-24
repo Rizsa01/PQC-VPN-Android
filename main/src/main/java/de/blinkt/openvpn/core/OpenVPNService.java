@@ -21,7 +21,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import de.blinkt.openvpn.R;
 import de.blinkt.openvpn.activities.PqcVpnActivity;
-
+import de.blinkt.openvpn.activities.VpnConfigManager; // <-- ADD THIS IMPORT
+import java.io.File; // <-- ADD THIS IMPORT
 public class OpenVPNService extends VpnService implements VpnStatus.StateListener {
 
     public static final String START_SERVICE = "de.blinkt.openvpn.START_SERVICE";
@@ -107,6 +108,13 @@ public class OpenVPNService extends VpnService implements VpnStatus.StateListene
 
         Log.i(PQC_VPN_LOG_TAG, "Profile loaded. Starting native process directly for profile: " + mProfile.getName());
 
+        File openSslConfigFile = VpnConfigManager.copyAndGetConfigFile(this);
+        if (openSslConfigFile == null) {
+            VpnStatus.logError("FATAL: Could not create openssl.cnf. PQC provider will not load.");
+            stopVpn();
+            return;
+        }
+
         // 2. Initialize the VpnService.Builder
         mBuilder = new Builder();
 
@@ -132,7 +140,7 @@ public class OpenVPNService extends VpnService implements VpnStatus.StateListene
 
             // This part is correct and remains unchanged.
 
-            Runnable process = new OpenVPNThread(this, argv.toArray(new String[0]), tmpDir);
+            Runnable process = new OpenVPNThread(this, argv.toArray(new String[0]), tmpDir, openSslConfigFile.getAbsolutePath());
             mProcessThread = new Thread(process, "OpenVPNProcessThread");
             mProcessThread.start();
             Log.i(PQC_VPN_LOG_TAG, "OpenVPNProcessThread has been started.");

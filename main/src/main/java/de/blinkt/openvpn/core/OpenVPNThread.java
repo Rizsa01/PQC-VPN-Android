@@ -14,7 +14,7 @@ import java.util.LinkedList;
 import java.util.Map;
 
 import de.blinkt.openvpn.R;
-
+import java.util.Map;
 public class OpenVPNThread implements Runnable {
     // NOTE: This MUST match the name of your executable in jniLibs
     private static final String OPENVPN_EXECUTABLE_NAME = "libopenvpn.so";
@@ -22,11 +22,13 @@ public class OpenVPNThread implements Runnable {
     private final String mTmpDir;
     private final OpenVPNService mService;
     private Process mProcess;
+    private final String mOpenSSLConfigPath;
 
-    public OpenVPNThread(OpenVPNService service, String[] argv, String tmpdir) {
+    public OpenVPNThread(OpenVPNService service, String[] argv, String tmpdir , String openSSLConfigPath) {
         this.mService = service;
         this.mArgv = argv;
         this.mTmpDir = tmpdir;
+        this.mOpenSSLConfigPath = openSSLConfigPath;
     }
 
     @Override
@@ -78,6 +80,8 @@ public class OpenVPNThread implements Runnable {
         Map<String, String> env = pb.environment();
         env.put("LD_LIBRARY_PATH", nativeLibraryDir);
         env.put("OPENSSL_MODULES", nativeLibraryDir);
+        // This tells OpenSSL where to find its configuration file, which activates the provider
+        env.put("OPENSSL_CONF", mOpenSSLConfigPath);
         env.put("TMPDIR", mTmpDir);
 
         PqcVpnLog.d("Environment: LD_LIBRARY_PATH=" + env.get("LD_LIBRARY_PATH"));
