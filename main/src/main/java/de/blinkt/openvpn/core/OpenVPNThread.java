@@ -114,7 +114,7 @@ public class OpenVPNThread implements Runnable {
                 String line;
                 while ((line = br.readLine()) != null) {
                     PqcVpnLog.d("NATIVE: " + line);
-                    VpnStatus.logInfo("P: " + line);
+                    //VpnStatus.logInfo("P: " + line);
                 }
             }
 

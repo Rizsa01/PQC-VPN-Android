@@ -469,18 +469,31 @@ public class VpnProfile implements Serializable, Cloneable, Parcelable {
         return mCustomConfigOptions;
     }
 
+    // In VpnProfile.java
+
     public void writeConfigFileOutput(Context context, OutputStream out) throws IOException {
         PrintWriter pw = new PrintWriter(new OutputStreamWriter(out, StandardCharsets.UTF_8));
 
-        // Log what we are about to write
+        // ### BEGIN DEFINITIVE FIX: EXPLICIT PROVIDER LOADING ###
+        // This is more reliable than relying on openssl.cnf on Android.
+        String nativeLibraryDir = context.getApplicationInfo().nativeLibraryDir;
+        pw.println("# Explicitly load the OQS provider for PQC algorithms");
+        pw.println("provider-path " + openVpnEscape(nativeLibraryDir));
+        pw.println("provider oqsprovider");
+        pw.println("provider default"); // Also ensure the default provider is loaded
+        pw.println();
+        // ### END DEFINITIVE FIX ###
+
         PqcVpnLog.i("--- BEGIN OpenVPN Config ---");
+        PqcVpnLog.i("provider-path " + nativeLibraryDir);
+        PqcVpnLog.i("provider oqsprovider");
         PqcVpnLog.i(mCustomConfigOptions);
         PqcVpnLog.i("<ca>...</ca>");
         PqcVpnLog.i("<cert>...</cert>");
         PqcVpnLog.i("<key>...</key>");
         PqcVpnLog.i("--- END OpenVPN Config ---");
 
-        // Write the components exactly as parsed from the .ovpn file
+        // Write the rest of the user's configuration
         if (!TextUtils.isEmpty(mCustomConfigOptions)) {
             pw.println(mCustomConfigOptions);
         }
@@ -816,71 +829,62 @@ public class VpnProfile implements Serializable, Cloneable, Parcelable {
         // Set the session name for the VPN interface
         builder.setSession(mName);
 
-        // Set the Maximum Transmission Unit (MTU) if specified
-        if (mTunMtu > 0) {
-            builder.setMtu(mTunMtu);
-            Log.d("PQC_VPN_Profile", "Setting MTU: " + mTunMtu);
-        }
-
-        // Add DNS servers
         if (mOverrideDNS) {
-            if (!TextUtils.isEmpty(mDNS1)) {
-                try {
-                    builder.addDnsServer(mDNS1);
-                    Log.d("PQC_VPN_Profile", "Adding DNS Server: " + mDNS1);
-                } catch (IllegalArgumentException e) {
-                    VpnStatus.logError(Integer.parseInt("Failed to add DNS server: " + mDNS1), e);
-                }
-            }
+            builder.addDnsServer(mDNS1);
             if (!TextUtils.isEmpty(mDNS2)) {
-                try {
-                    builder.addDnsServer(mDNS2);
-                    Log.d("PQC_VPN_Profile", "Adding DNS Server: " + mDNS2);
-                } catch (IllegalArgumentException e) {
-                    VpnStatus.logError(Integer.parseInt("Failed to add DNS server: " + mDNS2), e);
-                }
-            }
-            if (!TextUtils.isEmpty(mSearchDomain)) {
-                builder.addSearchDomain(mSearchDomain);
-                Log.d("PQC_VPN_Profile", "Adding DNS Search Domain: " + mSearchDomain);
+                builder.addDnsServer(mDNS2);
             }
         }
 
-        // Configure IPv4 address and routes
+        // 3. Configure IP addresses (CRITICAL MISSING STEP)
         if (!TextUtils.isEmpty(mIPv4Address)) {
-            try {
-                String[] parts = mIPv4Address.split("/");
-                if (parts.length == 2) {
+            String[] parts = mIPv4Address.split("/");
+            if (parts.length == 2) {
+                try {
                     builder.addAddress(parts[0], Integer.parseInt(parts[1]));
-                    Log.d("PQC_VPN_Profile", "Setting IPv4 Address: " + mIPv4Address);
+                } catch (NumberFormatException e) {
+                    Log.e("PQC_VPN_Profile", "Invalid IPv4 address format");
                 }
-            } catch (Exception e) {
-                VpnStatus.logError(Integer.parseInt("Failed to set IPv4 address: " + mIPv4Address), e);
             }
         }
+        // ### BEGIN DEFINITIVE FIX ###
+        // This is the crucial step that restores network connectivity.
+        // It prevents the VPN's own connection packets from being routed into the
+        // tunnel, which would create an impossible loop.
+        try {
+            builder.addDisallowedApplication(context.getPackageName());
+            Log.i("PQC_VPN_Profile", "Bypassing VPN for application package: " + context.getPackageName());
+        } catch (PackageManager.NameNotFoundException e) {
+            VpnStatus.logException("FATAL: Could not add self to disallowed apps", e);
+        }
+        // ### END DEFINITIVE FIX ###
 
+        // Set a placeholder IP address (this is still required by the API)
+        try {
+            builder.addAddress("10.8.0.1", 24);
+            Log.i("PQC_VPN_Profile", "Set placeholder IPv4 address 10.8.0.1/24 to satisfy VpnService.Builder.");
+        } catch (IllegalArgumentException e) {
+            VpnStatus.logError("Failed to set placeholder IP address.");
+        }
+
+        // Configure routes (your existing code is correct)
         if (mUseDefaultRoute) {
             builder.addRoute("0.0.0.0", 0);
             Log.d("PQC_VPN_Profile", "Adding default IPv4 route.");
-        }
-
-        // Configure IPv6 address and routes
-        if (!TextUtils.isEmpty(mIPv6Address)) {
-            try {
-                String[] parts = mIPv6Address.split("/");
-                if (parts.length == 2) {
-                    builder.addAddress(parts[0], Integer.parseInt(parts[1]));
-                    Log.d("PQC_VPN_Profile", "Setting IPv6 Address: " + mIPv6Address);
-                }
-            } catch (Exception e) {
-                VpnStatus.logError(Integer.parseInt("Failed to set IPv6 address: " + mIPv6Address), e);
-            }
         }
 
         if (mUseDefaultRoutev6) {
             builder.addRoute("::", 0);
             Log.d("PQC_VPN_Profile", "Adding default IPv6 route.");
         }
+
+        try {
+            builder.addDisallowedApplication(context.getPackageName());
+        } catch (PackageManager.NameNotFoundException e) {
+            Log.e("PQC_VPN_Profile", "Could not add self to disallowed apps", e);
+        }
+        // NOTE: We do not add DNS servers here. The native process will receive them
+        // via PUSH_REPLY and the management interface will configure them.
     }
 
 }

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Vector asset for the "VPN Connected" notification status.
+  This icon combines a shield shape with a checkmark.
+  It is designed to be tinted by the system to match the notification shade theme (light/dark).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24.0"
+    android:viewportHeight="24.0"
+    android:tint="?attr/colorControlNormal">
+
+    <!--
+      This single path data string efficiently renders a shield with an embedded checkmark.
+      Using a combined path is more performant than layering two separate paths.
+      Path data from Google's Material Icons (verified_user).
+    -->
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M12,1L3,5v6c0,5.55,3.84,10.74,9,12c5.16,-1.26,9,-6.45,9,-12V5L12,1zM10.94,18.03L7.4,14.49l1.41,-1.41l2.12,2.12l4.24,-4.24l1.41,1.41L10.94,18.03z" />
+
+</vector>
