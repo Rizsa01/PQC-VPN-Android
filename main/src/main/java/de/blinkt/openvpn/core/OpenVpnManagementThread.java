@@ -89,7 +89,14 @@ public class OpenVpnManagementThread implements Runnable, OpenVPNManagement {
             managementCommand("state on\n");
             managementCommand("bytecount " + mBytecountInterval + "\n");
 
-            Log.i(TAG, "Management connection established. Waiting for commands from native process.");
+            Log.i(TAG, "Management connection established. Releasing hold to start connection.");
+
+            // ==================================================================
+            // ### THE DEFINITIVE FIX: BREAK THE DEADLOCK ###
+            // The native process is paused because of --management-hold. We must
+            // explicitly tell it to continue now that our management client is ready.
+            releaseHoldCmd();
+            // ==================================================================
 
             while (!Thread.interrupted() && !mShuttingDown) {
                 int numBytesRead = instream.read(buffer);

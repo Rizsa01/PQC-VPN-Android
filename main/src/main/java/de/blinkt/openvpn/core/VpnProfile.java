@@ -474,35 +474,36 @@ public class VpnProfile implements Serializable, Cloneable, Parcelable {
     public void writeConfigFileOutput(Context context, OutputStream out) throws IOException {
         PrintWriter pw = new PrintWriter(new OutputStreamWriter(out, StandardCharsets.UTF_8));
 
-        // ### BEGIN DEFINITIVE FIX: EXPLICIT PROVIDER LOADING ###
-        // This is more reliable than relying on openssl.cnf on Android.
-        String nativeLibraryDir = context.getApplicationInfo().nativeLibraryDir;
-        pw.println("# Explicitly load the OQS provider for PQC algorithms");
-        pw.println("provider-path " + openVpnEscape(nativeLibraryDir));
-        pw.println("provider oqsprovider");
-        pw.println("provider default"); // Also ensure the default provider is loaded
-        pw.println();
-        // ### END DEFINITIVE FIX ###
+        // ### BEGIN DEFINITIVE FIX ###
+        // DO NOT write OpenSSL provider configuration here. The OPENSSL_CONF environment
+        // variable set in OpenVPNService.java is the correct and only mechanism needed.
+        // The native OpenVPN process will inherit the environment variable, causing the
+        // OpenSSL library to automatically load our openssl.cnf from the cache,
+        // which in turn loads the oqsprovider.so module.
 
         PqcVpnLog.i("--- BEGIN OpenVPN Config ---");
-        PqcVpnLog.i("provider-path " + nativeLibraryDir);
-        PqcVpnLog.i("provider oqsprovider");
+        PqcVpnLog.i("Writing user-defined custom options:");
         PqcVpnLog.i(mCustomConfigOptions);
         PqcVpnLog.i("<ca>...</ca>");
         PqcVpnLog.i("<cert>...</cert>");
         PqcVpnLog.i("<key>...</key>");
         PqcVpnLog.i("--- END OpenVPN Config ---");
 
-        // Write the rest of the user's configuration
+        // Write the user's actual configuration from the .ovpn file
         if (!TextUtils.isEmpty(mCustomConfigOptions)) {
             pw.println(mCustomConfigOptions);
         }
+
+        // Write the inline certificate and key data
         pw.write(insertFileData("ca", mCaFilename));
         pw.write(insertFileData("cert", mClientCertFilename));
         pw.write(insertFileData("key", mClientKeyFilename));
 
         pw.flush();
+        // DO NOT close the PrintWriter, as this would close the underlying stdin stream
+        // before the native process is fully done with it.
     }
+
 
     public String getPlatformVersionEnvString() {
         return String.format(Locale.US, "%d %s %s %s %s %s", Build.VERSION.SDK_INT, Build.VERSION.RELEASE,
