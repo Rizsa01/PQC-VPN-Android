@@ -1,5 +1,3 @@
-// Please replace the entire contents of your OpenVpnManagementThread.java with this code.
-
 package de.blinkt.openvpn.core;
 
 import android.content.Context;
@@ -51,6 +49,7 @@ public class OpenVpnManagementThread implements Runnable, OpenVPNManagement {
             tries++;
             try {
                 mSocket = new LocalSocket();
+                // Use FILESYSTEM namespace for sockets created in the app's cache directory
                 mSocket.connect(new LocalSocketAddress(mSocketPath, LocalSocketAddress.Namespace.FILESYSTEM));
                 Log.i(TAG, "Successfully connected to management socket on try " + tries);
                 return true;
@@ -82,7 +81,7 @@ public class OpenVpnManagementThread implements Runnable, OpenVPNManagement {
         byte[] buffer = new byte[2048];
         String pendingInput = "";
         try (InputStream instream = mSocket.getInputStream()) {
-            // Full, robust initialization sequence
+            // 1. Send initial setup commands
             managementCommand("version 3\n");
             managementCommand("log off\n");
             managementCommand("echo on\n");
@@ -91,13 +90,11 @@ public class OpenVpnManagementThread implements Runnable, OpenVPNManagement {
 
             Log.i(TAG, "Management connection established. Releasing hold to start connection.");
 
-            // ==================================================================
-            // ### THE DEFINITIVE FIX: BREAK THE DEADLOCK ###
-            // The native process is paused because of --management-hold. We must
-            // explicitly tell it to continue now that our management client is ready.
+            // 2. ### DEFINITIVE FIX: Proactively release the hold to break the deadlock ###
+            // The native process will not send any requests until this is done.
             releaseHoldCmd();
-            // ==================================================================
 
+            // 3. Now, enter the loop to process messages from the un-paused native process.
             while (!Thread.interrupted() && !mShuttingDown) {
                 int numBytesRead = instream.read(buffer);
                 if (numBytesRead == -1) {
@@ -120,6 +117,7 @@ public class OpenVpnManagementThread implements Runnable, OpenVPNManagement {
         Log.i(TAG, "Management thread exiting");
     }
 
+
     private String processInput(String pendingInput) {
         while (pendingInput.contains("\n")) {
             String[] tokens = pendingInput.split("\\r?\\n", 2);
@@ -130,6 +128,7 @@ public class OpenVpnManagementThread implements Runnable, OpenVPNManagement {
     }
 
     private void processCommand(String command) {
+        // All management messages from the server start with ">"
         if (command.startsWith(">")) {
             String[] parts = command.split(":", 2);
             String cmd = parts[0].substring(1);
@@ -138,7 +137,7 @@ public class OpenVpnManagementThread implements Runnable, OpenVPNManagement {
             switch (cmd) {
                 case "INFO":
                 case "ECHO":
-                    // VpnStatus.logInfo(argument); // Can be noisy, use Log.d for debug
+                    // These are informational, can be ignored or logged for debug
                     break;
                 case "STATE":
                     processState(argument);
@@ -147,20 +146,25 @@ public class OpenVpnManagementThread implements Runnable, OpenVPNManagement {
                     processNeedCommand(argument);
                     break;
                 case "HOLD":
+                    // The native process is confirming it is waiting for a 'hold release'
                     mWaitingForRelease = true;
-                    VpnStatus.updateStateString("WAIT", argument);
+                    VpnStatus.updateStateString("WAIT", "Waiting for client configuration");
                     break;
                 case "BYTECOUNT":
-                    // Handle byte count if needed
+                    // Handle byte count if needed for UI
+                    break;
+                case "FATAL":
+                case "ERROR":
+                    VpnStatus.logError("Native process reported a fatal error: " + argument);
                     break;
                 default:
                     Log.d(TAG, "MGMT_CMD: " + command);
                     break;
             }
         } else if (command.startsWith("SUCCESS: ") || command.startsWith("INFO: ")) {
-            // Ignore
+            // These are responses to our commands, can be ignored.
         } else {
-            Log.w(TAG, "Unrecognized management command: " + command);
+            Log.w(TAG, "Unrecognized management message: " + command);
         }
     }
 
@@ -174,7 +178,11 @@ public class OpenVpnManagementThread implements Runnable, OpenVPNManagement {
     private void processNeedCommand(String argument) {
         int p1 = argument.indexOf('\'');
         int p2 = argument.indexOf('\'', p1 + 1);
-        if (p1 == -1 || p2 == -1) return;
+        if (p1 == -1 || p2 == -1) {
+            Log.e(TAG, "Malformed NEED-OK command: " + argument);
+            return;
+        }
+
         String needed = argument.substring(p1 + 1, p2);
         String status = "ok";
 
@@ -182,39 +190,49 @@ public class OpenVpnManagementThread implements Runnable, OpenVPNManagement {
             if (mTunFd != null) {
                 Log.i(TAG, "Received OPENTUN request. Sending pre-established file descriptor.");
                 try {
+                    // Send the file descriptor over the socket
                     mSocket.setFileDescriptorsForSend(new FileDescriptor[]{mTunFd.getFileDescriptor()});
+                    // IMPORTANT: Send the command *after* setting the FDs to be sent
                     managementCommand("needok '" + needed + "' ok\n");
+                    // Clear the FDs so they aren't sent with the next command
                     mSocket.setFileDescriptorsForSend(null);
+
+                    // We can now close our copy of the FD
                     mTunFd.close();
                     mTunFd = null;
 
-                    // ### DEFINITIVE FIX: Release the hold to start the connection ###
+                    // ### DEFINITIVE FIX ###
+                    // Now that the native process has the TUN FD, we can release the hold
+                    // and allow the TLS connection to begin.
                     Log.i(TAG, "TUN FD provided, now releasing hold.");
                     releaseHoldCmd();
-                    return; // Now we can return.
+                    return; // Command handled, we can exit the function.
 
                 } catch (Exception e) {
                     VpnStatus.logException("Could not send fd over management socket", e);
                     status = "cancel";
                 }
             } else {
-                Log.e(TAG, "Received OPENTUN request, but mTunFd is null!");
+                Log.e(TAG, "Received OPENTUN request, but mTunFd is null! This should not happen.");
                 status = "cancel";
             }
         }
+        // Send a response for other NEED-OK types or if there was an error
         managementCommand(String.format("needok '%s' %s\n", needed, status));
     }
 
     private boolean managementCommand(String cmd) {
         if (mSocket == null || !mSocket.isConnected()) {
+            Log.w(TAG, "Cannot send command, management socket is not connected.");
             return false;
         }
         try {
             OutputStream out = mSocket.getOutputStream();
-            out.write((cmd).getBytes());
+            out.write((cmd).getBytes("UTF-8"));
             out.flush();
             return true;
         } catch (IOException e) {
+            Log.e(TAG, "IOException writing to management socket", e);
             return false;
         }
     }
@@ -222,6 +240,7 @@ public class OpenVpnManagementThread implements Runnable, OpenVPNManagement {
     private void releaseHoldCmd() {
         mResumeHandler.removeCallbacks(mResumeHoldRunnable);
         if ((System.currentTimeMillis() - mLastHoldRelease) < 2000) {
+            // Avoid spamming hold release commands
             try {
                 Thread.sleep(1000);
             } catch (InterruptedException ignored) {}
@@ -229,13 +248,14 @@ public class OpenVpnManagementThread implements Runnable, OpenVPNManagement {
         mWaitingForRelease = false;
         mLastHoldRelease = System.currentTimeMillis();
         managementCommand("hold release\n");
-        managementCommand("state on\n");
+        managementCommand("state on\n"); // Re-enable state messages after hold
     }
 
     private boolean shouldBeRunning() {
         return mPauseCallback == null || mPauseCallback.shouldBeRunning();
     }
 
+    // --- Implementation of OpenVPNManagement interface ---
     @Override public void reconnect() { signalusr1(); resume(); }
     @Override public void pause(pauseReason reason) { if (!mWaitingForRelease) signalusr1(); }
     @Override public void resume() { if (mWaitingForRelease) releaseHoldCmd(); }

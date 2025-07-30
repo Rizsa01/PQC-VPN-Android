@@ -15,6 +15,7 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.ParcelFileDescriptor;
+import android.text.TextUtils;
 import android.util.Log;
 import androidx.core.app.NotificationCompat;
 import java.io.File;
@@ -103,11 +104,21 @@ public class OpenVPNService extends VpnService implements VpnStatus.StateListene
         VpnStatus.logInfo("Starting PQC VPN service for profile: " + mProfile.getName());
 
         try {
-            // 1. Prepare the management socket path in a secure location
-            File mgtSocketFile = new File(getCacheDir(), "mgmtsocket");
-            mManagementSocketPath = mgtSocketFile.getAbsolutePath();
+            // 1. Establish the TUN interface FIRST to get the file descriptor
+            mBuilder = new Builder();
+            mProfile.addProfileToBuilder(mBuilder, this);
+            mTunFd = mBuilder.establish();
+            if (mTunFd == null) {
+                VpnStatus.logError("Android VpnService rejected the configuration.");
+                stopVpn();
+                return;
+            }
+            Log.i(PQC_VPN_LOG_TAG, "TUN interface established successfully.");
 
-            // 2. Build the command line for the native process
+            // 2. Get the integer value of the file descriptor
+            final int tunFd = mTunFd.getFd();
+
+            // 3. Build the command line, now including --dev-fd
             String nativeLibraryDir = getApplicationInfo().nativeLibraryDir;
             String tmpDir = getCacheDir().getPath();
             File openvpnFile = new File(nativeLibraryDir, "libopenvpn.so");
@@ -119,12 +130,19 @@ public class OpenVPNService extends VpnService implements VpnStatus.StateListene
             argv.add("stdin");
             argv.add("--verb");
             argv.add("4");
-            // Add the crucial management flags
             argv.add("--management");
             argv.add(mManagementSocketPath);
-            argv.add("unix"); // Use a UNIX domain socket
-            argv.add("--management-hold"); // Wait for the management client to connect
+            argv.add("unix");
+            argv.add("--management-hold");
             argv.add("--management-query-passwords");
+            argv.add("--ifconfig-noexec");
+            argv.add("--route-noexec");
+
+
+            String commandToLog = TextUtils.join(" ", argv);
+            Log.i(PQC_VPN_LOG_TAG, "--- EXECUTING NATIVE COMMAND ---");
+            Log.i(PQC_VPN_LOG_TAG, commandToLog);
+            Log.i(PQC_VPN_LOG_TAG, "---------------------------------");
 
             // 3. Start the native process
             ProcessBuilder pb = new ProcessBuilder(argv);
