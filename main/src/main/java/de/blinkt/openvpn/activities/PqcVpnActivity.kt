@@ -92,13 +92,32 @@ class PqcVpnActivity : AppCompatActivity(), VpnStatus.StateListener {
         }
 
         binding.buttonDisconnect.setOnClickListener {
-            ProfileManager.setConntectedVpnProfileDisconnected(this)
+            // --- BEGIN DEFINITIVE FIX ---
+            // Create an explicit Intent to command the service to stop.
+            val disconnectVpnIntent = Intent(this, OpenVPNService::class.java).apply {
+                action = OpenVPNService.DISCONNECT_VPN
+            }
+            // Send the command to the service.
+            startService(disconnectVpnIntent)
+            PqcVpnLog.i("User Action: Tapped 'Disconnect' button. Sent DISCONNECT_VPN intent to service.")
+            // --- END DEFINITIVE FIX ---
         }
     }
 
     private fun requestVpnPermission() {
         PqcVpnLog.d("Requesting VPN permission...")
-        VpnService.prepare(this)?.let { vpnPermissionLauncher.launch(it) } ?: startVpn()
+        val vpnIntent = VpnService.prepare(this)
+        if (vpnIntent != null) {
+            // --- DEFINITIVE FIX ---
+            // The system needs to ask the user for permission. Launch the dialog.
+            // The result will be handled by the vpnPermissionLauncher callback.
+            PqcVpnLog.i("VpnService not prepared. Launching system permission dialog.")
+            vpnPermissionLauncher.launch(vpnIntent)
+        } else {
+            // Permission has already been granted. We can start the VPN immediately.
+            PqcVpnLog.i("VpnService is already prepared. Starting VPN now.")
+            startVpn()
+        }
     }
 
     private fun startVpn() {

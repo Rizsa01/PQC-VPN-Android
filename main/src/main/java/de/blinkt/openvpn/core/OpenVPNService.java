@@ -1,5 +1,3 @@
-// Please replace the entire contents of your OpenVPNService.java with this code.
-
 package de.blinkt.openvpn.core;
 
 import static de.blinkt.openvpn.core.VpnProfile.EXTRA_PROFILEUUID;
@@ -15,45 +13,48 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.ParcelFileDescriptor;
-import android.text.TextUtils;
 import android.util.Log;
 import androidx.core.app.NotificationCompat;
+
 import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Map;
+
 import de.blinkt.openvpn.R;
 import de.blinkt.openvpn.activities.PqcVpnActivity;
 import de.blinkt.openvpn.activities.VpnConfigManager;
 
 public class OpenVPNService extends VpnService implements VpnStatus.StateListener {
-
     public static final String START_SERVICE = "de.blinkt.openvpn.START_SERVICE";
-    public static final String EXTRA_DO_NOT_REPLACE_RUNNING_VPN = "de.blinkt.openvpn.DO_NOT_REPLACE_RUNNING_VPN";
-    public static final String EXTRA_START_REASON = "de.blinkt.openvpn.startReason";
+    public static final String EXTRA_VPN_PROFILE_OBJECT = "de.blinkt.openvpn.VPN_PROFILE_OBJECT";
     public static final String DISCONNECT_VPN = "de.blinkt.openvpn.DISCONNECT_VPN";
     public static final String NOTIFICATION_CHANNEL_ID = "openvpn_status";
-    private static final String PQC_VPN_LOG_TAG = "PQC_VPN_Service";
-    public static final String EXTRA_VPN_PROFILE_OBJECT = "de.blinkt.openvpn.VPN_PROFILE_OBJECT";
+    private static final String TAG = "PQC_VPN_Service";
 
-    private Handler mCommandHandler;
-    private HandlerThread mCommandHandlerThread;
-    private VpnProfile mProfile;
-    private Thread mProcessThread;
-    private VpnService.Builder mBuilder;
+    public static final String EXTRA_DO_NOT_REPLACE_RUNNING_VPN = "de.blinkt.openvpn.DO_NOT_REPLACE_RUNNING_VPN";
+    public static final String EXTRA_START_REASON = "de.blinkt.openvpn.startReason";
+
+    private Builder              mBuilder;
     private ParcelFileDescriptor mTunFd;
-    private boolean mPersistTun = false;
+    private String               mManagementSocketPath;
+    private Handler              mCommandHandler;
+    private HandlerThread        mCommandHandlerThread;
+    private VpnProfile           mProfile;
+    private Thread               mProcessThread;
+    private OpenVPNManagement    mManagement;
+    private OpenVPNThread        mVPNThread;
     private OpenVpnManagementThread mManagementThread;
-    private String mManagementSocketPath;
+
 
     private final IBinder mBinder = new IOpenVPNServiceInternal.Stub() {
-        @Override public boolean protect(int fd) { return OpenVPNService.this.protect(fd); }
-        @Override public void userPause(boolean shouldbePaused) {}
-        @Override public boolean stopVPN(boolean replace) { return stopVpn(); }
-        @Override public void addAllowedExternalApp(String packagename) {}
-        @Override public boolean isAllowedExternalApp(String packagename) { return false; }
-        @Override public void challengeResponse(String response) {}
+        @Override public boolean protect(int fd)                     { return OpenVPNService.this.protect(fd); }
+        @Override public void    userPause(boolean shouldbePaused)   {}
+        @Override public boolean stopVPN(boolean replaceConnection)  { return stopVpn(); }
+        @Override public void    addAllowedExternalApp(String pkg)   {}
+        @Override public boolean isAllowedExternalApp(String pkg)    { return false; }
+        @Override public void    challengeResponse(String response)  {}
     };
 
     @Override
@@ -66,11 +67,29 @@ public class OpenVPNService extends VpnService implements VpnStatus.StateListene
         createNotificationChannel();
     }
 
+
+
+    /** Called by the management thread after establish() succeeds */
+    public void setTunFd(ParcelFileDescriptor fd) {
+        this.mTunFd = fd;
+    }
+
+    /** Expose your Builder so the management thread can call establish() */
+    public Builder getVpnBuilder() {
+        return mBuilder;
+    }
+
+    /** Expose your profile so the management thread can populate routes, DNS, etc. */
+    public VpnProfile getVpnProfile() {
+        return mProfile;
+    }
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && START_SERVICE.equals(intent.getAction())) {
             mCommandHandler.post(() -> startVpn(intent));
         } else if (intent != null && DISCONNECT_VPN.equals(intent.getAction())) {
+            Log.i(TAG, "Received DISCONNECT_VPN intent.");
             mCommandHandler.post(this::stopVpn);
         }
         return START_STICKY;
@@ -78,13 +97,15 @@ public class OpenVPNService extends VpnService implements VpnStatus.StateListene
 
     public void writeProfileToStdIn(OutputStream stdin) throws IOException {
         if (mProfile != null) {
-            VpnStatus.logInfo("Writing config to STDIN");
+            Log.i(TAG, "Writing OpenVPN config to stdin.");
             mProfile.writeConfigFileOutput(this, stdin);
-            Log.i(PQC_VPN_LOG_TAG, "Config file written to process stdin.");
         }
     }
 
     private void startVpn(Intent intent) {
+        Log.i(TAG, "===== VPN START SEQUENCE INITIATED =====");
+
+        // 1. load profile
         if (intent.hasExtra(EXTRA_VPN_PROFILE_OBJECT)) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 mProfile = intent.getParcelableExtra(EXTRA_VPN_PROFILE_OBJECT, VpnProfile.class);
@@ -94,120 +115,107 @@ public class OpenVPNService extends VpnService implements VpnStatus.StateListene
         } else {
             mProfile = ProfileManager.get(this, intent.getStringExtra(EXTRA_PROFILEUUID));
         }
-
         if (mProfile == null) {
-            Log.e(PQC_VPN_LOG_TAG, "FATAL: VpnProfile is null, cannot start VPN.");
+            Log.e(TAG, "FATAL: VpnProfile is null, aborting.");
             stopSelf();
             return;
         }
-
-        VpnStatus.logInfo("Starting PQC VPN service for profile: " + mProfile.getName());
+        Log.i(TAG, "Loaded profile: " + mProfile.getName());
 
         try {
-            // 1. Establish the TUN interface FIRST to get the file descriptor
+            // --- BEGIN DEFINITIVE FIX ---
+            // 1. Create the VpnService.Builder.
             mBuilder = new Builder();
+            Log.i(TAG, "Step 2: VpnService.Builder created.");
+
+            // 2. Apply STATIC configuration from the profile.
+            // This sets the session name, placeholder IP, and default routes.
+            // This is the critical missing step.
             mProfile.addProfileToBuilder(mBuilder, this);
+            Log.i(TAG, "Step 3: VpnService.Builder statically configured from profile.");
+
+            // 3. Establish a TEMPORARY TUN interface with the placeholder config.
+            // This is necessary to get a valid File Descriptor to start with.
             mTunFd = mBuilder.establish();
             if (mTunFd == null) {
-                VpnStatus.logError("Android VpnService rejected the configuration.");
+                VpnStatus.logError("Android VpnService.Builder.establish() returned null.");
                 stopVpn();
                 return;
             }
-            Log.i(PQC_VPN_LOG_TAG, "TUN interface established successfully.");
+            Log.i(TAG, "Step 4: Temporary TUN interface established.");
+            // --- END DEFINITIVE FIX ---
 
-            // 2. Get the integer value of the file descriptor
-            final int tunFd = mTunFd.getFd();
 
-            // 3. Build the command line, now including --dev-fd
-            String nativeLibraryDir = getApplicationInfo().nativeLibraryDir;
-            String tmpDir = getCacheDir().getPath();
-            File openvpnFile = new File(nativeLibraryDir, "libopenvpn.so");
-            File openSslConfigFile = VpnConfigManager.copyAndGetConfigFile(this);
+            // 3. Prepare management socket + paths
+            File mgtSock = new File(getCacheDir(), "mgmtsocket");
+            mManagementSocketPath = mgtSock.getAbsolutePath();
+            String libDir    = getApplicationInfo().nativeLibraryDir;
+            String tmpDir    = getCacheDir().getPath();
+            File openvpnBin  = new File(libDir, "libopenvpn.so");
+            File sslConf     = VpnConfigManager.copyAndGetConfigFile(this);
+            Log.i(TAG, "Paths prepared.");
 
+            // 4. Build native command
             ArrayList<String> argv = new ArrayList<>();
-            argv.add(openvpnFile.getAbsolutePath());
-            argv.add("--config");
-            argv.add("stdin");
-            argv.add("--verb");
-            argv.add("4");
-            argv.add("--management");
-            argv.add(mManagementSocketPath);
+            argv.add(openvpnBin.getAbsolutePath());
+            argv.add("--dev"); argv.add("tun");
+            argv.add("--config"); argv.add("stdin");
+            argv.add("--verb"); argv.add("4");
+            argv.add("--management"); argv.add(mManagementSocketPath);
             argv.add("unix");
             argv.add("--management-hold");
             argv.add("--management-query-passwords");
             argv.add("--ifconfig-noexec");
             argv.add("--route-noexec");
+            Log.i(TAG, "Command line constructed.");
 
-
-            String commandToLog = TextUtils.join(" ", argv);
-            Log.i(PQC_VPN_LOG_TAG, "--- EXECUTING NATIVE COMMAND ---");
-            Log.i(PQC_VPN_LOG_TAG, commandToLog);
-            Log.i(PQC_VPN_LOG_TAG, "---------------------------------");
-
-            // 3. Start the native process
+            // 5. Start process
             ProcessBuilder pb = new ProcessBuilder(argv);
-            pb.directory(new File(tmpDir));
             Map<String, String> env = pb.environment();
-            env.put("LD_LIBRARY_PATH", nativeLibraryDir);
-            env.put("OPENSSL_MODULES", nativeLibraryDir);
-            env.put("OPENSSL_CONF", openSslConfigFile.getAbsolutePath());
+            env.put("LD_LIBRARY_PATH", libDir);
+            env.put("OPENSSL_MODULES", libDir);
+            if (sslConf != null) env.put("OPENSSL_CONF", sslConf.getAbsolutePath());
             env.put("TMPDIR", tmpDir);
-
+            pb.redirectErrorStream(true);
             Process process = pb.start();
-            Log.i(PQC_VPN_LOG_TAG, "Native OpenVPN process started.");
+            Log.i(TAG, "Native process started.");
 
-            // 4. Write the config to the process's stdin
+            // 6. Feed config
             OutputStream stdin = process.getOutputStream();
             new Thread(() -> {
                 try {
                     writeProfileToStdIn(stdin);
                 } catch (IOException e) {
-                    PqcVpnLog.e("Error writing config to stdin", e);
+                    Log.e(TAG, "Error writing config to stdin", e);
                 } finally {
-                    try {
-                        stdin.close();
-                    } catch (IOException e) { /* ignore */ }
+                    try { stdin.close(); } catch (IOException ignored) {}
                 }
             }, "OpenVPNConfigWriter").start();
 
+            // 7. Start management thread (it will configure Builder & call establish())
+            mManagementThread = new OpenVpnManagementThread(
+                    mProfile, this, mManagementSocketPath, null, mBuilder
+            );
+            new Thread(mManagementThread, "OpenVPNManagementThread").start();
+            Log.i(TAG, "Management thread started.");
 
-            // 5. Establish the TUN interface
-            mBuilder = new Builder();
-            mProfile.addProfileToBuilder(mBuilder, this);
-            mTunFd = mBuilder.establish();
-            if (mTunFd == null) {
-                VpnStatus.logError("Android VpnService rejected the configuration.");
-                process.destroy();
-                stopVpn();
-                return;
-            }
-            Log.i(PQC_VPN_LOG_TAG, "TUN interface established successfully.");
-
-            // 6. Start the management thread to control the native process
-            mManagementThread = new OpenVpnManagementThread(mProfile, this, mManagementSocketPath, mTunFd);
-            Thread management = new Thread(mManagementThread, "OpenVPNManagementThread");
-            management.start();
-            Log.i(PQC_VPN_LOG_TAG, "OpenVPN Management Thread started.");
-
+            // 8. Start monitor thread
             mProcessThread = new Thread(new OpenVPNProcessThread(process, this), "OpenVPNProcessThread");
             mProcessThread.start();
-            Log.i(PQC_VPN_LOG_TAG, "OpenVPN Process Monitoring Thread started.");
-
+            Log.i(TAG, "Process monitoring thread started.");
 
         } catch (Exception e) {
-            VpnStatus.logException("Fatal error during OpenVPN startup sequence", e);
+            Log.e(TAG, "Exception during VPN startup", e);
+            VpnStatus.logException("Startup error", e);
             stopVpn();
         }
     }
 
     boolean stopVpn() {
-        Log.i(PQC_VPN_LOG_TAG, "Stopping VPN...");
-        if (mManagementThread != null) {
-            // This will signal SIGTERM to the native process via the management socket
-            mManagementThread.stopVPN(false);
-        } else if (mProcessThread != null) {
-            // Fallback if management thread isn't running
-            mProcessThread.interrupt();
+        Log.w(TAG, "stopVpn() called.");
+        if (mVPNThread != null) {
+            Log.w(TAG, "Stopping native process.");
+            mVPNThread.stopProcess();
         }
         endVpnService();
         return true;
@@ -216,60 +224,69 @@ public class OpenVPNService extends VpnService implements VpnStatus.StateListene
     private void endVpnService() {
         mCommandHandler.post(() -> {
             mProcessThread = null;
-            mManagementThread = null;
+            mManagement    = null;
             ProfileManager.setConntectedVpnProfileDisconnected(this);
             VpnStatus.removeStateListener(this);
-            try {
-                if (mTunFd != null && !mPersistTun) {
-                    mTunFd.close();
-                    mTunFd = null;
-                }
-            } catch (IOException e) {
-                VpnStatus.logException("Error closing TunFd", e);
-            }
             stopForeground(true);
             stopSelf();
         });
     }
 
-    @Override public void onDestroy() { super.onDestroy(); stopVpn(); if (mCommandHandlerThread != null) { mCommandHandlerThread.quit(); } }
-    @Override public IBinder onBind(Intent intent) { return mBinder; }
-    @Override
-    public void onRevoke() {
+    @Override public void onDestroy() {
+        super.onDestroy();
+        stopVpn();
+        if (mCommandHandlerThread != null) mCommandHandlerThread.quit();
+    }
+
+    @Override public IBinder onBind(Intent intent) {
+        return mBinder;
+    }
+
+    @Override public void onRevoke() {
         VpnStatus.logError("VPN permission revoked by system!");
         stopVpn();
     }
-    @Override public void updateState(String state, String logmessage, int resid, ConnectionStatus level, Intent intent) { showNotification(VpnStatus.getLastCleanLogMessage(this), level); }
-    private void showNotification(String message, ConnectionStatus level) {
-        Intent mainActivity = new Intent(this, PqcVpnActivity.class);
-        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, mainActivity, PendingIntent.FLAG_IMMUTABLE);
 
-        NotificationCompat.Builder nbuilder = new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+    @Override
+    public void updateState(String state, String logmessage, int resid,
+                            ConnectionStatus level, Intent intent) {
+        showNotification(VpnStatus.getLastCleanLogMessage(this), level);
+    }
+
+    private void showNotification(String message, ConnectionStatus level) {
+        Intent main = new Intent(this, PqcVpnActivity.class);
+        PendingIntent pi = PendingIntent.getActivity(
+                this, 0, main, PendingIntent.FLAG_IMMUTABLE
+        );
+
+        NotificationCompat.Builder nb = new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
                 .setContentTitle(getString(R.string.app))
                 .setContentText(message)
                 .setOnlyAlertOnce(true)
                 .setOngoing(true)
                 .setSmallIcon(R.drawable.ic_notification)
-                .setContentIntent(pendingIntent);
+                .setContentIntent(pi);
 
         if (level == ConnectionStatus.LEVEL_CONNECTED) {
-            nbuilder.setSmallIcon(R.drawable.ic_notification_connected);
+            nb.setSmallIcon(R.drawable.ic_notification_connected);
         }
 
-        Notification notification = nbuilder.build();
-        startForeground(1, notification);
+        Notification n = nb.build();
+        startForeground(1, n);
     }
+
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel serviceChannel = new NotificationChannel(
+            NotificationChannel ch = new NotificationChannel(
                     NOTIFICATION_CHANNEL_ID,
                     "OpenVPN Status",
                     NotificationManager.IMPORTANCE_DEFAULT
             );
-            NotificationManager manager = getSystemService(NotificationManager.class);
-            manager.createNotificationChannel(serviceChannel);
+            getSystemService(NotificationManager.class).createNotificationChannel(ch);
         }
     }
+
     @Override public void setConnectedVPN(String uuid) {}
-    public OpenVPNManagement getManagement() { return mManagementThread; }
+    public OpenVPNManagement getManagement() { return mManagement; }
+    public Builder getBuilder() { return mBuilder; }
 }

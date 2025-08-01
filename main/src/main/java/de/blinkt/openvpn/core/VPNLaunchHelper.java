@@ -32,7 +32,16 @@ public class VPNLaunchHelper {
      * It is used by OpenVPNService to construct the command.
      */
     static String[] buildOpenvpnArgv(Context c) {
-        // This is a minimal argument list. The service will overwrite the first element.
-        return new String[] {"openvpn", "--config", "stdin"};
+        // ==================================================================
+        // ### THE DEFINITIVE, FINAL FIX ###
+        // The OpenVPNThread architecture requires that all flags are passed
+        // via this helper. We add the no-exec flags here to prevent the
+        // native process from attempting privileged operations.
+        return new String[] {
+                "--config", "stdin",
+                "--ifconfig-noexec",
+                "--route-noexec"
+        };
+        // ==================================================================
     }
 }

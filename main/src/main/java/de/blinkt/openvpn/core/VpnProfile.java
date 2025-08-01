@@ -71,6 +71,8 @@ import de.blinkt.openvpn.R;
 
 public class VpnProfile implements Serializable, Cloneable, Parcelable {
 
+    private static final String TAG = "PQC_VPN_Profile";
+
     public int mVersion = 0;
     public String mServerName = "48.209.35.108";
     public String mServerPort = "1194";
@@ -474,35 +476,33 @@ public class VpnProfile implements Serializable, Cloneable, Parcelable {
     public void writeConfigFileOutput(Context context, OutputStream out) throws IOException {
         PrintWriter pw = new PrintWriter(new OutputStreamWriter(out, StandardCharsets.UTF_8));
 
-        // ### BEGIN DEFINITIVE FIX ###
-        // DO NOT write OpenSSL provider configuration here. The OPENSSL_CONF environment
-        // variable set in OpenVPNService.java is the correct and only mechanism needed.
-        // The native OpenVPN process will inherit the environment variable, causing the
-        // OpenSSL library to automatically load our openssl.cnf from the cache,
-        // which in turn loads the oqsprovider.so module.
-
-        PqcVpnLog.i("--- BEGIN OpenVPN Config ---");
-        PqcVpnLog.i("Writing user-defined custom options:");
-        PqcVpnLog.i(mCustomConfigOptions);
-        PqcVpnLog.i("<ca>...</ca>");
-        PqcVpnLog.i("<cert>...</cert>");
-        PqcVpnLog.i("<key>...</key>");
-        PqcVpnLog.i("--- END OpenVPN Config ---");
-
-        // Write the user's actual configuration from the .ovpn file
-        if (!TextUtils.isEmpty(mCustomConfigOptions)) {
-            pw.println(mCustomConfigOptions);
+        // Your custom options (still filter out dev tun/tap)
+        if (mCustomConfigOptions != null) {
+            for (String line : mCustomConfigOptions.split("\\r?\\n")) {
+                String t = line.trim();
+                if (t.startsWith("dev tun") || t.startsWith("dev tap")) {
+                    // drop
+                } else {
+                    pw.println(line);
+                }
+            }
         }
 
-        // Write the inline certificate and key data
-        pw.write(insertFileData("ca", mCaFilename));
-        pw.write(insertFileData("cert", mClientCertFilename));
-        pw.write(insertFileData("key", mClientKeyFilename));
+        // Inject pull‐filters—but **do not** ignore "ifconfig" here!
+        pw.println("pull-filter ignore \"redirect-gateway\"");
+        pw.println("pull-filter ignore \"route-gateway\"");
+        pw.println("pull-filter ignore \"route\"");
+        // pw.println("pull-filter ignore \"ifconfig\"");  // ← removed
+
+        // Inline CA / cert / key
+        pw.write(insertFileData("ca",    mCaFilename));
+        pw.write(insertFileData("cert",  mClientCertFilename));
+        pw.write(insertFileData("key",   mClientKeyFilename));
 
         pw.flush();
-        // DO NOT close the PrintWriter, as this would close the underlying stdin stream
-        // before the native process is fully done with it.
     }
+
+
 
 
     public String getPlatformVersionEnvString() {
@@ -825,67 +825,41 @@ public class VpnProfile implements Serializable, Cloneable, Parcelable {
     };
 
     public void addProfileToBuilder(VpnService.Builder builder, Context context) {
-        Log.d("PQC_VPN_Profile", "Configuring VpnService.Builder from profile.");
+        Log.d(TAG, "Configuring VpnService.Builder from profile: " + mName);
 
-        // Set the session name for the VPN interface
         builder.setSession(mName);
 
+        // DNS
         if (mOverrideDNS) {
             builder.addDnsServer(mDNS1);
-            if (!TextUtils.isEmpty(mDNS2)) {
+            if (!TextUtils.isEmpty(mDNS2))
                 builder.addDnsServer(mDNS2);
-            }
         }
 
-        // 3. Configure IP addresses (CRITICAL MISSING STEP)
-        if (!TextUtils.isEmpty(mIPv4Address)) {
-            String[] parts = mIPv4Address.split("/");
-            if (parts.length == 2) {
-                try {
-                    builder.addAddress(parts[0], Integer.parseInt(parts[1]));
-                } catch (NumberFormatException e) {
-                    Log.e("PQC_VPN_Profile", "Invalid IPv4 address format");
-                }
-            }
-        }
-        // ### BEGIN DEFINITIVE FIX ###
-        // This is the crucial step that restores network connectivity.
-        // It prevents the VPN's own connection packets from being routed into the
-        // tunnel, which would create an impossible loop.
-        try {
-            builder.addDisallowedApplication(context.getPackageName());
-            Log.i("PQC_VPN_Profile", "Bypassing VPN for application package: " + context.getPackageName());
-        } catch (PackageManager.NameNotFoundException e) {
-            VpnStatus.logException("FATAL: Could not add self to disallowed apps", e);
-        }
-        // ### END DEFINITIVE FIX ###
-
-        // Set a placeholder IP address (this is still required by the API)
+        // Placeholder address: required by the API before establish()
         try {
             builder.addAddress("10.8.0.1", 24);
-            Log.i("PQC_VPN_Profile", "Set placeholder IPv4 address 10.8.0.1/24 to satisfy VpnService.Builder.");
+            Log.i(TAG, "Set placeholder IPv4 address 10.8.0.1/24");
         } catch (IllegalArgumentException e) {
-            VpnStatus.logError("Failed to set placeholder IP address.");
+            Log.e(TAG, "Failed to set placeholder address", e);
         }
 
-        // Configure routes (your existing code is correct)
+        // Routes
         if (mUseDefaultRoute) {
             builder.addRoute("0.0.0.0", 0);
-            Log.d("PQC_VPN_Profile", "Adding default IPv4 route.");
+            Log.d(TAG, "Adding default IPv4 route.");
         }
-
         if (mUseDefaultRoutev6) {
             builder.addRoute("::", 0);
-            Log.d("PQC_VPN_Profile", "Adding default IPv6 route.");
+            Log.d(TAG, "Adding default IPv6 route.");
         }
 
+        // Bypass our own process
         try {
             builder.addDisallowedApplication(context.getPackageName());
         } catch (PackageManager.NameNotFoundException e) {
-            Log.e("PQC_VPN_Profile", "Could not add self to disallowed apps", e);
+            Log.e(TAG, "Could not add self to disallowed apps", e);
         }
-        // NOTE: We do not add DNS servers here. The native process will receive them
-        // via PUSH_REPLY and the management interface will configure them.
     }
 
 }

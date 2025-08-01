@@ -34,38 +34,33 @@ public class OpenVPNThread implements Runnable {
     @Override
     public void run() {
         try {
+            PqcVpnLog.i("OpenVPNThread.run(): Entered.");
             startOpenVPN();
         } catch (Exception e) {
             PqcVpnLog.e("!!!!!!!!!! NATIVE PROCESS FAILED TO START !!!!!!!!!!", e);
             VpnStatus.logException("FATAL: OpenVPNThread crashed.", e);
         } finally {
-            PqcVpnLog.w("OpenVPN Thread is shutting down.");
+            PqcVpnLog.w("OpenVPNThread.run(): Thread is shutting down.");
             if (mProcess != null) {
                 mProcess.destroy();
             }
             VpnStatus.updateStateString("NOPROCESS", "", R.string.state_noprocess, ConnectionStatus.LEVEL_NOTCONNECTED);
+            PqcVpnLog.w("OpenVPNThread.run(): Exiting.");
         }
     }
 
     private void startOpenVPN() throws IOException {
-        PqcVpnLog.i("OpenVPNThread: startOpenVPN() entered.");
+        PqcVpnLog.i("OpenVPNThread.startOpenVPN(): Entered.");
 
         String nativeLibraryDir = mService.getApplicationInfo().nativeLibraryDir;
         File openvpnFile = new File(nativeLibraryDir, OPENVPN_EXECUTABLE_NAME);
         PqcVpnLog.d("Executable path set to: " + openvpnFile.getAbsolutePath());
 
-        if (!openvpnFile.exists()) {
-            PqcVpnLog.e("FATAL: EXECUTABLE DOES NOT EXIST at path. Check jniLibs packaging.", null);
+        if (!openvpnFile.exists() || !openvpnFile.canExecute()) {
+            PqcVpnLog.e("FATAL: EXECUTABLE DOES NOT EXIST or IS NOT EXECUTABLE.", null);
             return;
         }
-        PqcVpnLog.i("Executable file exists.");
-
-        // We do not call setExecutable(true). The system installer does this for us.
-        if (!openvpnFile.canExecute()) {
-            PqcVpnLog.e("FATAL: EXECUTABLE IS NOT EXECUTABLE. Check APK packaging, extractNativeLibs=true in manifest.", null);
-            return;
-        }
-        PqcVpnLog.i("Executable has execute permission.");
+        PqcVpnLog.i("Executable file check passed.");
 
         LinkedList<String> argvlist = new LinkedList<>();
         argvlist.add(openvpnFile.getAbsolutePath());
@@ -80,12 +75,9 @@ public class OpenVPNThread implements Runnable {
         Map<String, String> env = pb.environment();
         env.put("LD_LIBRARY_PATH", nativeLibraryDir);
         env.put("OPENSSL_MODULES", nativeLibraryDir);
-        // This tells OpenSSL where to find its configuration file, which activates the provider
         env.put("OPENSSL_CONF", mOpenSSLConfigPath);
         env.put("TMPDIR", mTmpDir);
-
-        PqcVpnLog.d("Environment: LD_LIBRARY_PATH=" + env.get("LD_LIBRARY_PATH"));
-        PqcVpnLog.d("Environment: OPENSSL_MODULES=" + env.get("OPENSSL_MODULES"));
+        PqcVpnLog.d("Environment configured.");
 
         pb.redirectErrorStream(true);
 
@@ -97,12 +89,15 @@ public class OpenVPNThread implements Runnable {
             final OutputStream stdin = mProcess.getOutputStream();
             new Thread(() -> {
                 try {
+                    PqcVpnLog.i("ConfigWriterThread: Starting to write profile to stdin.");
                     mService.writeProfileToStdIn(stdin);
+                    PqcVpnLog.i("ConfigWriterThread: Finished writing profile.");
                 } catch (IOException e) {
-                    PqcVpnLog.e("Error writing config to stdin", e);
+                    PqcVpnLog.e("ConfigWriterThread: Error writing config to stdin", e);
                 } finally {
                     try {
                         stdin.close();
+                        PqcVpnLog.i("ConfigWriterThread: stdin stream closed.");
                     } catch (IOException e) { /* ignore */ }
                 }
             }, "OpenVPNConfigWriter").start();
@@ -110,12 +105,12 @@ public class OpenVPNThread implements Runnable {
             try (InputStream in = mProcess.getInputStream();
                  BufferedReader br = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
 
-                PqcVpnLog.i("Waiting for native log output...");
+                PqcVpnLog.i("LogReader: Waiting for native log output...");
                 String line;
                 while ((line = br.readLine()) != null) {
                     PqcVpnLog.d("NATIVE: " + line);
-                    //VpnStatus.logInfo("P: " + line);
                 }
+                PqcVpnLog.w("LogReader: Native process output stream ended.");
             }
 
             int exitValue = mProcess.waitFor();
