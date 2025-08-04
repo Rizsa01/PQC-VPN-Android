@@ -833,45 +833,44 @@ public class VpnProfile implements Serializable, Cloneable, Parcelable {
         }
     };
 
+
+    // In VpnProfile.java
+
     public void addProfileToBuilder(VpnService.Builder builder, Context context) {
         Log.d(TAG, "Configuring VpnService.Builder from profile: " + mName);
 
         builder.setSession(mName);
 
-        // DNS settings are fine to set here, they will be overridden later if needed.
-        if (mOverrideDNS) {
-            builder.addDnsServer(mDNS1);
-            if (!TextUtils.isEmpty(mDNS2))
-                builder.addDnsServer(mDNS2);
-        }
-
-        // Placeholder address: This is required by the API before establish() can be called.
-        // It does not need to be the real address.
+        // Add the placeholder address. This is required.
         try {
-            builder.addAddress("10.0.0.1", 32); // Use a minimal, non-conflicting address
+            builder.addAddress("10.0.0.1", 32);
             Log.i(TAG, "Set placeholder IPv4 address 10.0.0.1/32");
         } catch (IllegalArgumentException e) {
             Log.e(TAG, "Failed to set placeholder address", e);
         }
 
         // --- BEGIN DEFINITIVE FIX ---
-        // DO NOT ADD ANY ROUTES HERE.
-        // Adding a route (especially 0.0.0.0/0) to the placeholder tunnel will
-        // immediately break the device's internet connection before the native
-        // process can connect to the server. Routes will be added later in the
-        // OPENTUN handler after the real configuration is received.
-        //
-        // REMOVED:
-        // if (mUseDefaultRoute) {
-        //     builder.addRoute("0.0.0.0", 0);
-        // }
-        // if (mUseDefaultRoutev6) {
-        //     builder.addRoute("::", 0);
-        // }
+        // Add the default route for all traffic. This is the key change.
+        // The VpnService will capture all traffic EXCEPT for the VPN app itself.
+        if (mUseDefaultRoute) {
+            builder.addRoute("0.0.0.0", 0);
+            Log.i(TAG, "Added default IPv4 route to VpnService builder.");
+        }
+        if (mUseDefaultRoutev6) {
+            builder.addRoute("::", 0);
+            Log.i(TAG, "Added default IPv6 route to VpnService builder.");
+        }
+        // DO NOT add a specific route for the server. The default route handles it.
         // --- END DEFINITIVE FIX ---
 
+        // Add DNS servers. This will be overridden by the push reply later, which is fine.
+        if (mOverrideDNS) {
+            builder.addDnsServer(mDNS1);
+            if (!TextUtils.isEmpty(mDNS2))
+                builder.addDnsServer(mDNS2);
+        }
 
-        // Bypass our own process. This is correct.
+        // Bypass our own process. This is critical for the default route to work.
         try {
             builder.addDisallowedApplication(context.getPackageName());
         } catch (PackageManager.NameNotFoundException e) {

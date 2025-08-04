@@ -42,7 +42,7 @@ public class OpenVpnManagementThread implements Runnable, OpenVPNManagement {
     private final OpenVPNService mOpenVPNService;
     private final String mSocketPath;
     private LocalSocket mSocket;
-    private ParcelFileDescriptor mTunFd;
+    private final ParcelFileDescriptor mTunFd;
     private final Handler mResumeHandler;
     private boolean mShuttingDown = false;
     private boolean mWaitingForRelease = false;
@@ -60,14 +60,10 @@ public class OpenVpnManagementThread implements Runnable, OpenVPNManagement {
         mProfile = profile;
         mOpenVPNService = openVpnService;
         mSocketPath = socketPath;
-        // Note: We no longer store tunFd as a member variable, as it's created later.
-        mBuilder = builder; // Store the passed-in builder
+        mTunFd = tunFd; // Store the file descriptor passed from the service
+        mBuilder = builder;
 
-        // --- BEGIN DEFINITIVE FIX ---
-        // This line was missing. It initializes the final Handler variable.
         mResumeHandler = new Handler(openVpnService.getMainLooper());
-        // --- END DEFINITIVE FIX ---
-
         PqcVpnLog.i("Management Thread instantiated.");
     }
     private boolean shouldBeRunning() {
@@ -227,38 +223,29 @@ public class OpenVpnManagementThread implements Runnable, OpenVPNManagement {
 
     // REPLACE your existing processNeedCommand method with this one.
 
+    // In file: de/blinkt/openvpn/core/OpenVpnManagementThread.java
+
     private void processNeedCommand(String argument) {
         int p1 = argument.indexOf('\'');
         int p2 = argument.indexOf('\'', p1 + 1);
-        if (p1 == -1 || p2 == -1) return;
+        if (p1 == -1 || p2 == -1) {
+            PqcVpnLog.e("[DEBUG_MGMT] Malformed >NEED-OK command: " + argument, null);
+            return;
+        }
 
         String needed = argument.substring(p1 + 1, p2);
         String fullArgs = argument.substring(p2 + 2).trim();
-        PqcVpnLog.d("[DEBUG_MGMT] >>>> Received NEED-OK <<<<");
-        PqcVpnLog.d("[DEBUG_MGMT] Command: '" + needed + "'");
-        PqcVpnLog.d("[DEBUG_MGMT] Full Args: '" + fullArgs + "'");
-        PqcVpnLog.d("[DEBUG_MGMT] Current redirectGateway flag state: " + mRedirectGateway);
-
-        String[] argv = fullArgs.split(" ");
-        String value = argv[argv.length - 1];
+        PqcVpnLog.d("[DEBUG_MGMT] >>>> Received NEED-OK <<<< Command: '" + needed + "', Args: '" + fullArgs + "'");
 
         switch (needed) {
             case "IFCONFIG":
-                PqcVpnLog.d("[DEBUG_MGMT] IFCONFIG case entered.");
-                String[] ifconfigArgs = fullArgs.split(" ");
-                if (ifconfigArgs.length >= 2) {
-                    mBuilder.setSession(mProfile.getName());
-                    int prefix = CIDRIP.calculateLenFromMask(ifconfigArgs[1]);
-                    mBuilder.addAddress(ifconfigArgs[0], prefix);
-                    PqcVpnLog.d("[DEBUG_MGMT] IFCONFIG: Added address " + ifconfigArgs[0] + "/" + prefix);
-                } else {
-                    PqcVpnLog.e("[DEBUG_MGMT] IFCONFIG: Malformed arguments.", null);
-                }
+                // This case is now superseded by parsing the PUSH_REPLY log,
+                // but we acknowledge it to be safe.
+                PqcVpnLog.d("[DEBUG_MGMT] Acknowledging IFCONFIG NEED-OK (will use PUSH_REPLY data).");
                 managementCommand("needok '" + needed + "' ok\n");
                 break;
 
             case "ROUTE":
-                PqcVpnLog.d("[DEBUG_MGMT] ROUTE case entered.");
                 String[] routeArgs = fullArgs.split(" ");
                 if (routeArgs.length >= 2) {
                     mRoutes.add(new CIDRIP(routeArgs[0], routeArgs[1]));
@@ -270,17 +257,18 @@ public class OpenVpnManagementThread implements Runnable, OpenVPNManagement {
                 break;
 
             case "ROUTE6":
-                // --- BEGIN DEFINITIVE FIX: Robust parsing for ROUTE6 ---
                 Pattern route6Pattern = Pattern.compile("([0-9a-fA-F:]+/[0-9]+)");
                 Matcher route6Matcher = route6Pattern.matcher(fullArgs);
                 if (route6Matcher.find()) {
-                    mRoutesv6.add(CIDRIP.parse(route6Matcher.group(1)));
-                    managementCommand("needok '" + needed + "' ok\n");
+                    CIDRIP route = CIDRIP.parse(route6Matcher.group(1));
+                    if (route != null) {
+                        mRoutesv6.add(route);
+                        PqcVpnLog.d("[DEBUG_MGMT] ROUTE6: Stored route " + route.toString());
+                    }
                 } else {
                     PqcVpnLog.e("Could not parse IPv6 route from: " + fullArgs, null);
-                    managementCommand("needok '" + needed + "' cancel\n");
                 }
-                // --- END DEFINITIVE FIX ---
+                managementCommand("needok '" + needed + "' ok\n");
                 break;
 
             case "DNSSERVER":
@@ -289,59 +277,69 @@ public class OpenVpnManagementThread implements Runnable, OpenVPNManagement {
                 break;
 
             case "OPENTUN":
-                PqcVpnLog.d("[DEBUG_MGMT] OPENTUN case entered.");
+                PqcVpnLog.d("[DEBUG_MGMT] OPENTUN: Entering primary tunnel establishment logic.");
                 try {
-                    PqcVpnLog.d("[DEBUG_MGMT] OPENTUN: Configuring final VpnService parameters.");
+                    // 1. Configure the builder with all collected parameters.
+                    mBuilder.setSession(mProfile.getName());
 
-                    mBuilder.setMtu(mPushedMtu);
-                    PqcVpnLog.d("[DEBUG_MGMT] OPENTUN: Set MTU to " + mPushedMtu);
-                    // --- BEGIN DEFINITIVE FIX ---
-                    // Use the IP address and netmask we parsed from the PUSH_REPLY log.
+                    // 2. Set the REAL IP address. This is the most critical fix.
                     if (mPushedIp != null && mPushedMask != null) {
                         int prefix = CIDRIP.calculateLenFromMask(mPushedMask);
                         mBuilder.addAddress(mPushedIp, prefix);
-                        PqcVpnLog.d("[DEBUG_MGMT] OPENTUN: Added address from PUSH_REPLY: " + mPushedIp + "/" + prefix);
+                        PqcVpnLog.i("[DEBUG_MGMT] OPENTUN: Configuring VpnService with address: " + mPushedIp + "/" + prefix);
                     } else {
-                        // This is a fatal error. The VPN cannot work without an IP.
-                        PqcVpnLog.e("[DEBUG_MGMT] OPENTUN: FATAL - No pushed IP address was parsed before OPENTUN was called.", null);
+                        PqcVpnLog.e("[DEBUG_MGMT] OPENTUN: FATAL - No pushed IP address was parsed. Cannot establish tunnel.", null);
+                        VpnStatus.logError("Server did not push an IP address to the client.");
                         managementCommand("needok 'OPENTUN' cancel\n");
-                        return; // Stop processing
+                        return;
                     }
-                    // --- END DEFINITIVE FIX ---
+
+                    // 3. Set MTU, DNS, and all routes.
+                    mBuilder.setMtu(mPushedMtu);
+                    PqcVpnLog.i("[DEBUG_MGMT] OPENTUN: Setting MTU to " + mPushedMtu);
 
                     for (String dns : mDnslist) {
-                        PqcVpnLog.d("[DEBUG_MGMT] OPENTUN: Adding DNS: " + dns);
                         mBuilder.addDnsServer(dns);
+                        PqcVpnLog.i("[DEBUG_MGMT] OPENTUN: Adding DNS Server: " + dns);
                     }
                     for (CIDRIP route : mRoutes) {
-                        PqcVpnLog.d("[DEBUG_MGMT] OPENTUN: Adding specific route: " + route.mIp + "/" + route.len);
                         mBuilder.addRoute(route.mIp, route.len);
+                        PqcVpnLog.i("[DEBUG_MGMT] OPENTUN: Adding IPv4 Route: " + route.toString());
+                    }
+                    for (CIDRIP route : mRoutesv6) {
+                        mBuilder.addRoute(route.mIp, route.len);
+                        PqcVpnLog.i("[DEBUG_MGMT] OPENTUN: Adding IPv6 Route: " + route.toString());
                     }
 
-                    PqcVpnLog.d("[DEBUG_MGMT] OPENTUN: Checking redirectGateway flag. Current state: " + mRedirectGateway);
+                    // 4. Add the default route if the server pushed "redirect-gateway".
                     if (mRedirectGateway) {
-                        PqcVpnLog.d("[DEBUG_MGMT] OPENTUN: redirectGateway is TRUE. Adding default routes 0.0.0.0/0 and ::/0.");
+                        PqcVpnLog.i("[DEBUG_MGMT] OPENTUN: redirect-gateway is TRUE. Adding default routes for all traffic.");
                         mBuilder.addRoute("0.0.0.0", 0);
                         mBuilder.addRoute("::", 0);
-                    } else {
-                        PqcVpnLog.d("[DEBUG_MGMT] OPENTUN: redirectGateway is FALSE. NOT adding default routes.");
                     }
 
+                    // 5. Exclude our own app from the VPN to prevent traffic loops.
                     mBuilder.addDisallowedApplication(mOpenVPNService.getPackageName());
-                    PqcVpnLog.d("[DEBUG_MGMT] OPENTUN: Calling establish().");
 
+                    // 6. Perform the SINGLE, FINAL call to establish().
+                    PqcVpnLog.i("[DEBUG_MGMT] OPENTUN: Calling VpnService.Builder.establish()...");
                     ParcelFileDescriptor tunFd = mBuilder.establish();
-                    if (tunFd == null) throw new IllegalStateException("VpnService.establish() returned null.");
+                    if (tunFd == null) {
+                        throw new IllegalStateException("VpnService.establish() returned null. Check Android logs for VpnService errors. This can happen if the user denies the VPN permission dialog.");
+                    }
 
-                    PqcVpnLog.d("[DEBUG_MGMT] OPENTUN: VpnService established successfully. FD=" + tunFd.getFd());
+                    PqcVpnLog.i("[DEBUG_MGMT] OPENTUN: VpnService established successfully. TUN FD=" + tunFd.getFd());
+
+                    // 7. Send the valid file descriptor to the native process.
                     mSocket.setFileDescriptorsForSend(new FileDescriptor[]{tunFd.getFileDescriptor()});
                     managementCommand("needok 'OPENTUN' ok\n");
                     mSocket.setFileDescriptorsForSend(null);
-                    tunFd.close();
-                    PqcVpnLog.d("[DEBUG_MGMT] OPENTUN: Successfully sent TUN FD.");
+                    tunFd.close(); // The native process now owns the FD, we can close our copy.
+                    PqcVpnLog.i("[DEBUG_MGMT] OPENTUN: Successfully sent TUN FD to native process.");
 
                 } catch (Exception e) {
-                    PqcVpnLog.e("[DEBUG_MGMT] OPENTUN: FATAL Exception.", e);
+                    PqcVpnLog.e("[DEBUG_MGMT] OPENTUN: FATAL Exception during tunnel establishment.", e);
+                    VpnStatus.logException("Error establishing VPN tunnel", e);
                     managementCommand("needok 'OPENTUN' cancel\n");
                 }
                 break;
@@ -354,16 +352,9 @@ public class OpenVpnManagementThread implements Runnable, OpenVPNManagement {
                 try {
                     FileDescriptor[] fds = mSocket.getAncillaryFileDescriptors();
                     if (fds != null && fds.length > 0) {
-
-                        // --- BEGIN DEFINITIVE FIX ---
-                        // The FileDescriptor object does not have a public getInt$() method.
-                        // The official and required way to get the raw integer FD for the
-                        // VpnService.protect() call is by using reflection.
                         java.lang.reflect.Field descriptorField = FileDescriptor.class.getDeclaredField("descriptor");
                         descriptorField.setAccessible(true);
                         int fdToProtect = descriptorField.getInt(fds[0]);
-                        // --- END DEFINITIVE FIX ---
-
                         PqcVpnLog.i("Received PROTECTFD request for fd=" + fdToProtect);
 
                         if (mOpenVPNService.protect(fdToProtect)) {
@@ -377,11 +368,12 @@ public class OpenVpnManagementThread implements Runnable, OpenVPNManagement {
                         PqcVpnLog.e("Received PROTECTFD request but no file descriptor was attached.", null);
                         managementCommand("needok '" + needed + "' cancel\n");
                     }
-                } catch (Exception e) { // Catch generic Exception for reflection errors
+                } catch (Exception e) {
                     PqcVpnLog.e("Error getting/protecting ancillary file descriptor for PROTECTFD", e);
                     managementCommand("needok '" + needed + "' cancel\n");
                 }
                 break;
+
             default:
                 PqcVpnLog.w("Acknowledging unhandled >NEED-OK request for: " + needed);
                 managementCommand("needok '" + needed + "' ok\n");
