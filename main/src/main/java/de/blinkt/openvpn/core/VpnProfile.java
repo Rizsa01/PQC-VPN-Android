@@ -475,31 +475,40 @@ public class VpnProfile implements Serializable, Cloneable, Parcelable {
 
     public void writeConfigFileOutput(Context context, OutputStream out) throws IOException {
         PrintWriter pw = new PrintWriter(new OutputStreamWriter(out, StandardCharsets.UTF_8));
+        PqcVpnLog.d("[DEBUG_CONFIG] Writing config to native process.");
 
-        // Your custom options (still filter out dev tun/tap)
         if (mCustomConfigOptions != null) {
             for (String line : mCustomConfigOptions.split("\\r?\\n")) {
                 String t = line.trim();
+                // Keep the filter for 'dev tun' as it's a forbidden override
                 if (t.startsWith("dev tun") || t.startsWith("dev tap")) {
-                    // drop
+                    PqcVpnLog.d("[DEBUG_CONFIG] Filtering out forbidden directive: \"" + line + "\"");
                 } else {
                     pw.println(line);
                 }
             }
         }
 
-        // Inject pull‐filters—but **do not** ignore "ifconfig" here!
-        pw.println("pull-filter ignore \"redirect-gateway\"");
-        pw.println("pull-filter ignore \"route-gateway\"");
-        pw.println("pull-filter ignore \"route\"");
-        // pw.println("pull-filter ignore \"ifconfig\"");  // ← removed
+        // --- BEGIN DEFINITIVE FIX ---
+        // DO NOT ignore "ifconfig". The --ifconfig-noexec flag ensures that the native
+        // process will parse the IP/netmask and forward it to the management interface
+        // via a >NEED-OK 'IFCONFIG' ... message, which is what we want.
+        // REMOVED: pw.println("pull-filter ignore \"ifconfig\"");
+        // --- END DEFINITIVE FIX ---
 
-        // Inline CA / cert / key
+        // This directive is still useful for older servers.
+        pw.println("pull-filter ignore \"comp-lzo\"");
+
+        // Your PQC/Cipher settings remain correct.
+        pw.println("data-ciphers AES-256-GCM:AES-256-CBC\n");
+        PqcVpnLog.i("[DEBUG_CONFIG] Injected mandatory directive: data-ciphers AES-256-GCM");
+
         pw.write(insertFileData("ca",    mCaFilename));
         pw.write(insertFileData("cert",  mClientCertFilename));
         pw.write(insertFileData("key",   mClientKeyFilename));
 
         pw.flush();
+        PqcVpnLog.d("[DEBUG_CONFIG] Config flushed to stream.");
     }
 
 
@@ -829,32 +838,40 @@ public class VpnProfile implements Serializable, Cloneable, Parcelable {
 
         builder.setSession(mName);
 
-        // DNS
+        // DNS settings are fine to set here, they will be overridden later if needed.
         if (mOverrideDNS) {
             builder.addDnsServer(mDNS1);
             if (!TextUtils.isEmpty(mDNS2))
                 builder.addDnsServer(mDNS2);
         }
 
-        // Placeholder address: required by the API before establish()
+        // Placeholder address: This is required by the API before establish() can be called.
+        // It does not need to be the real address.
         try {
-            builder.addAddress("10.8.0.1", 24);
-            Log.i(TAG, "Set placeholder IPv4 address 10.8.0.1/24");
+            builder.addAddress("10.0.0.1", 32); // Use a minimal, non-conflicting address
+            Log.i(TAG, "Set placeholder IPv4 address 10.0.0.1/32");
         } catch (IllegalArgumentException e) {
             Log.e(TAG, "Failed to set placeholder address", e);
         }
 
-        // Routes
-        if (mUseDefaultRoute) {
-            builder.addRoute("0.0.0.0", 0);
-            Log.d(TAG, "Adding default IPv4 route.");
-        }
-        if (mUseDefaultRoutev6) {
-            builder.addRoute("::", 0);
-            Log.d(TAG, "Adding default IPv6 route.");
-        }
+        // --- BEGIN DEFINITIVE FIX ---
+        // DO NOT ADD ANY ROUTES HERE.
+        // Adding a route (especially 0.0.0.0/0) to the placeholder tunnel will
+        // immediately break the device's internet connection before the native
+        // process can connect to the server. Routes will be added later in the
+        // OPENTUN handler after the real configuration is received.
+        //
+        // REMOVED:
+        // if (mUseDefaultRoute) {
+        //     builder.addRoute("0.0.0.0", 0);
+        // }
+        // if (mUseDefaultRoutev6) {
+        //     builder.addRoute("::", 0);
+        // }
+        // --- END DEFINITIVE FIX ---
 
-        // Bypass our own process
+
+        // Bypass our own process. This is correct.
         try {
             builder.addDisallowedApplication(context.getPackageName());
         } catch (PackageManager.NameNotFoundException e) {

@@ -6,13 +6,17 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.content.Context;
 import android.content.Intent;
+import android.net.ConnectivityManager;
+import android.net.Network;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.ParcelFileDescriptor;
+import android.text.TextUtils;
 import android.util.Log;
 import androidx.core.app.NotificationCompat;
 
@@ -103,9 +107,7 @@ public class OpenVPNService extends VpnService implements VpnStatus.StateListene
     }
 
     private void startVpn(Intent intent) {
-        Log.i(TAG, "===== VPN START SEQUENCE INITIATED =====");
-
-        // 1. load profile
+        PqcVpnLog.i("================== VPN START SEQUENCE INITIATED ==================");
         if (intent.hasExtra(EXTRA_VPN_PROFILE_OBJECT)) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 mProfile = intent.getParcelableExtra(EXTRA_VPN_PROFILE_OBJECT, VpnProfile.class);
@@ -115,98 +117,97 @@ public class OpenVPNService extends VpnService implements VpnStatus.StateListene
         } else {
             mProfile = ProfileManager.get(this, intent.getStringExtra(EXTRA_PROFILEUUID));
         }
+
         if (mProfile == null) {
-            Log.e(TAG, "FATAL: VpnProfile is null, aborting.");
+            PqcVpnLog.e("FATAL: VpnProfile is null. Cannot start VPN.", null);
             stopSelf();
             return;
         }
-        Log.i(TAG, "Loaded profile: " + mProfile.getName());
+        PqcVpnLog.i("Step 1: Profile '" + mProfile.getName() + "' loaded successfully.");
 
         try {
-            // --- BEGIN DEFINITIVE FIX ---
-            // 1. Create the VpnService.Builder.
+            PqcVpnLog.d("[DEBUG_SERVICE] START: VpnService startup sequence initiated.");
+
             mBuilder = new Builder();
-            Log.i(TAG, "Step 2: VpnService.Builder created.");
+            PqcVpnLog.d("[DEBUG_SERVICE] Builder created.");
 
-            // 2. Apply STATIC configuration from the profile.
-            // This sets the session name, placeholder IP, and default routes.
-            // This is the critical missing step.
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            Network activeNetwork = cm.getActiveNetwork();
+            if (activeNetwork != null) {
+                mBuilder.setUnderlyingNetworks(new Network[]{activeNetwork});
+                PqcVpnLog.i("[DEBUG_SERVICE] Successfully bound VpnService to active network: " + activeNetwork);
+            } else {
+                PqcVpnLog.e("[DEBUG_SERVICE] FATAL: No active network found. Cannot start VPN.", null);
+                VpnStatus.logError("No active network connection available.");
+                stopVpn();
+                return;
+            }
+
             mProfile.addProfileToBuilder(mBuilder, this);
-            Log.i(TAG, "Step 3: VpnService.Builder statically configured from profile.");
+            PqcVpnLog.d("[DEBUG_SERVICE] Builder statically configured from profile.");
 
-            // 3. Establish a TEMPORARY TUN interface with the placeholder config.
-            // This is necessary to get a valid File Descriptor to start with.
             mTunFd = mBuilder.establish();
             if (mTunFd == null) {
                 VpnStatus.logError("Android VpnService.Builder.establish() returned null.");
                 stopVpn();
                 return;
             }
-            Log.i(TAG, "Step 4: Temporary TUN interface established.");
-            // --- END DEFINITIVE FIX ---
+            PqcVpnLog.d("[DEBUG_SERVICE] Temporary TUN interface established with FD: " + mTunFd.getFd());
 
+            File mgtSocketFile = new File(getCacheDir(), "mgmtsocket");
+            mManagementSocketPath = mgtSocketFile.getAbsolutePath();
+            String nativeLibraryDir = getApplicationInfo().nativeLibraryDir;
+            String tmpDir = getCacheDir().getPath();
+            File openvpnExecutable = new File(nativeLibraryDir, "libopenvpn.so");
+            File openSslConfigFile = VpnConfigManager.copyAndGetConfigFile(this);
+            PqcVpnLog.d("[DEBUG_SERVICE] Paths prepared.");
 
-            // 3. Prepare management socket + paths
-            File mgtSock = new File(getCacheDir(), "mgmtsocket");
-            mManagementSocketPath = mgtSock.getAbsolutePath();
-            String libDir    = getApplicationInfo().nativeLibraryDir;
-            String tmpDir    = getCacheDir().getPath();
-            File openvpnBin  = new File(libDir, "libopenvpn.so");
-            File sslConf     = VpnConfigManager.copyAndGetConfigFile(this);
-            Log.i(TAG, "Paths prepared.");
-
-            // 4. Build native command
             ArrayList<String> argv = new ArrayList<>();
-            argv.add(openvpnBin.getAbsolutePath());
+            argv.add(openvpnExecutable.getAbsolutePath());
             argv.add("--dev"); argv.add("tun");
             argv.add("--config"); argv.add("stdin");
             argv.add("--verb"); argv.add("4");
-            argv.add("--management"); argv.add(mManagementSocketPath);
-            argv.add("unix");
+            argv.add("--management"); argv.add(mManagementSocketPath); argv.add("unix");
             argv.add("--management-hold");
             argv.add("--management-query-passwords");
             argv.add("--ifconfig-noexec");
             argv.add("--route-noexec");
-            Log.i(TAG, "Command line constructed.");
+            PqcVpnLog.d("[DEBUG_SERVICE] Command line constructed: " + TextUtils.join(" ", argv));
 
-            // 5. Start process
             ProcessBuilder pb = new ProcessBuilder(argv);
             Map<String, String> env = pb.environment();
-            env.put("LD_LIBRARY_PATH", libDir);
-            env.put("OPENSSL_MODULES", libDir);
-            if (sslConf != null) env.put("OPENSSL_CONF", sslConf.getAbsolutePath());
+            env.put("LD_LIBRARY_PATH", nativeLibraryDir);
+            env.put("OPENSSL_MODULES", nativeLibraryDir);
+            if (openSslConfigFile != null) env.put("OPENSSL_CONF", openSslConfigFile.getAbsolutePath());
             env.put("TMPDIR", tmpDir);
             pb.redirectErrorStream(true);
-            Process process = pb.start();
-            Log.i(TAG, "Native process started.");
+            PqcVpnLog.d("[DEBUG_SERVICE] Environment configured.");
 
-            // 6. Feed config
-            OutputStream stdin = process.getOutputStream();
+            Process process = pb.start();
+            PqcVpnLog.d("[DEBUG_SERVICE] Native process object created.");
+
+            final OutputStream stdin = process.getOutputStream();
             new Thread(() -> {
                 try {
                     writeProfileToStdIn(stdin);
                 } catch (IOException e) {
-                    Log.e(TAG, "Error writing config to stdin", e);
+                    PqcVpnLog.e("ConfigWriterThread: Error writing config to stdin", e);
                 } finally {
-                    try { stdin.close(); } catch (IOException ignored) {}
+                    try { stdin.close(); } catch (IOException e) { /* ignore */ }
                 }
             }, "OpenVPNConfigWriter").start();
 
-            // 7. Start management thread (it will configure Builder & call establish())
-            mManagementThread = new OpenVpnManagementThread(
-                    mProfile, this, mManagementSocketPath, null, mBuilder
-            );
+            mManagementThread = new OpenVpnManagementThread(mProfile, this, mManagementSocketPath, mTunFd, mBuilder);
             new Thread(mManagementThread, "OpenVPNManagementThread").start();
-            Log.i(TAG, "Management thread started.");
+            PqcVpnLog.d("[DEBUG_SERVICE] Management thread started.");
 
-            // 8. Start monitor thread
             mProcessThread = new Thread(new OpenVPNProcessThread(process, this), "OpenVPNProcessThread");
             mProcessThread.start();
-            Log.i(TAG, "Process monitoring thread started.");
+            PqcVpnLog.d("[DEBUG_SERVICE] Process monitoring thread started. Startup sequence complete.");
 
         } catch (Exception e) {
-            Log.e(TAG, "Exception during VPN startup", e);
-            VpnStatus.logException("Startup error", e);
+            PqcVpnLog.e("[DEBUG_SERVICE] FATAL EXCEPTION in startVpn()", e);
+            VpnStatus.logException("Fatal error during OpenVPN startup sequence", e);
             stopVpn();
         }
     }
